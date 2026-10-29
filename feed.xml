@@ -1,1 +1,71 @@
-<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator><link href="https://nehabthakur.github.io/feed.xml" rel="self" type="application/atom+xml" /><link href="https://nehabthakur.github.io/" rel="alternate" type="text/html" /><updated>2026-07-09T15:42:40+00:00</updated><id>https://nehabthakur.github.io/feed.xml</id><title type="html">Neha Thakur</title><subtitle>Personal blog</subtitle></feed>
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator><link href="https://nehabthakur.github.io/feed.xml" rel="self" type="application/atom+xml" /><link href="https://nehabthakur.github.io/" rel="alternate" type="text/html" /><updated>2026-10-29T11:08:16+00:00</updated><id>https://nehabthakur.github.io/feed.xml</id><title type="html">Neha Thakur</title><subtitle>Personal blog</subtitle><author><name>Neha Thakur</name></author><entry><title type="html">Evolution of Data Storage Layers</title><link href="https://nehabthakur.github.io/2026/10/29/evolution-of-data-storage-layers.html" rel="alternate" type="text/html" title="Evolution of Data Storage Layers" /><published>2026-10-29T00:00:00+00:00</published><updated>2026-10-29T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/10/29/evolution-of-data-storage-layers</id><content type="html" xml:base="https://nehabthakur.github.io/2026/10/29/evolution-of-data-storage-layers.html"><![CDATA[<p>In Data Lifecycle Engineering, Data Storage Layer spans across all the other layers and hence is a backbone of your entire data architecture. And the data can we stored anywhere from databases, data warehouses, data lakes. But how these systems handle data is vastly different and the storage option you select depends on the business use case and how the downstream app consumes them.</p>
+
+<h2 id="databases">Databases</h2>
+
+<p>This is one of the most familiar topics and hence we will not go into depth. As we know, for different needs we have different databases. Some of the most popular ones are Relational databases (Postgres, MySQL, Amazon Aurora), Document DBs, Wide-Column DBs, Graph DBs, and Key-Value DBs, etc. Storing data into these DBs is primarily for OLTP (Online Transactional Processing) purposes. They do not serve well for analytical workloads (OLAP) such as calculating trends or aggregations across millions of records. Because the data in these transactional databases is mostly stored in rows on the disk, the engine is forced to scan a massive amount of unnecessary data just to extract and compute a single metric, taking significantly more time than the specialized analytical options we’ll see below.</p>
+
+<h2 id="data-warehouse">Data Warehouse</h2>
+
+<p>A Data Warehouse is an excellent option for analytical workloads. This is where you dump all of your structured data that has been generated from sources such as:</p>
+
+<ul>
+  <li><strong>Transactional Systems:</strong> Relational databases like PostgreSQL, MySQL, or Amazon Aurora.</li>
+  <li><strong>SaaS Applications:</strong> Structured data exported from tools like Salesforce, HubSpot, or Stripe.</li>
+  <li><strong>Logging Systems:</strong> Application or system logs that follow a strict, predefined schema.</li>
+</ul>
+
+<p>Because it stores structured data and enforces schema-on-write, it is ideal for downstream systems like BI tools for report generation and dashboarding.</p>
+
+<p>Under the hood, data warehouses use columnar storage. While traditional databases read data row-by-row (making them slow for analytical calculations), data warehouses store data column-by-column. If a dashboard only needs to calculate total revenue, the engine skips all other columns on the disk and reads only the revenue data, making analytics extremely fast.</p>
+
+<p>However, there are challenges with Data Warehouses:</p>
+
+<ul>
+  <li><strong>Rigid Structure:</strong> Data must be heavily structured into strict rows and columns before entry, it cannot natively store raw, unstructured data like videos, audio, or messy, unpredictable JSON payloads.</li>
+  <li><strong>The Ingestion Bottleneck:</strong> Transforming and cleaning massive volumes of high-velocity, real-time data before writing it to the warehouse can easily lag or bottleneck your data pipeline.</li>
+  <li><strong>Loss of Granular History:</strong> Because data must be aggregated or transformed to fit the warehouse schema, you often need to throw away the original, raw data that a data scientist or ML engineer might need for machine learning years down the line. However, sometimes companies might not throw away the raw data but instead store it somewhere, this maintenance of data at multiple places creates complexity.</li>
+</ul>
+
+<h2 id="data-lake">Data Lake</h2>
+
+<p>Because of the above challenges of Data Warehouses, Data Lakes were invented. Data Lakes act as a centralised repository and let you store data in its raw, native format without needing to structure it first unlike Data Warehouses, as they follow schema-on-reads. They are very cheap and separate storage from compute, letting any engine read the data. They are also extremely flexible in the types of data that can be stored:</p>
+
+<ul>
+  <li><strong>Structured Data:</strong> Tabular rows and columns.</li>
+  <li><strong>Semi-Structured Data:</strong> JSON payloads, XML files, and CSVs.</li>
+  <li><strong>Unstructured Data:</strong> PDFs, text documents, emails, videos, and audio recordings.</li>
+</ul>
+
+<p>Despite their flexibility, Data Lakes are bad for traditional business reporting and dashboarding, as they are not indexed and don’t follow ACID compliance and the reporting/dashboarding requires fast, clean SQL tables.</p>
+
+<p>This meant companies needed to maintain 2 types of data storage systems for analytics. Data warehouses with structured data for reporting/dashboarding and data lakes with all types of data for Machine Learning. Maintaining this is expensive, time consuming and operationally painful. Data Engineers will need to constantly write complex pipelines to sync and move data back and forth between these storage systems. And as I mentioned above, Data Lakes don’t comply with ACID, concurrent writers could corrupt data mid-write and there was no dependable way to know which files represented a table’s current, accurate state</p>
+
+<h2 id="data-lakehouse">Data Lakehouse</h2>
+
+<p>Because of the need to maintain 2 different storage systems, Data Lakehouse was born. To oversimply it, it is a mix between Data Warehouse and a Data Lake, meaning you can store all kinds and types of information into your Data Lakehouse, it will have a magic metadata layer that creates an illusion of structured data to let your query all types of table with SQL for reporting all while preserving the raw data underneath for Data Science &amp; ML.</p>
+
+<h3 id="magic-metadata-layer">Magic Metadata Layer</h3>
+
+<p>Spoiler alert, there is no magic here. In reality, a Data Lakehouse uses a bridge to make unstructured or semi-structured files look like clean tables using an Open Table Format. It gets the name “Open” because the table specifications are completely public i.e., any query engine can read them without being locked into a single proprietary database vendor.</p>
+
+<p>While there are three popular open table formats used in production today, they all rely on a Manifest File (which acts as a file-level index to map out where data lives). However, how they organize and manage these files under the hood is different:</p>
+
+<ul>
+  <li><strong>Apache Iceberg:</strong> Organizes metadata in a hierarchical, tree-based structure (Metadata root -&gt; Manifest Lists -&gt; Manifest Files) to allow engines to skip unneeded files instantly.</li>
+  <li><strong>Delta Lake:</strong> Open-sourced by Databricks, it uses a timeline-based transaction log approach (an ordered ledger of JSON commits) to track table history and updates.</li>
+  <li><strong>Apache Hudi:</strong> Originally created by Uber, it specializes in streaming workloads and low-latency incremental updates, organizing files to handle rapid inserts and deletes seamlessly.</li>
+</ul>
+
+<blockquote>
+  <p><strong>Side Note:</strong> Before the above table formats, Industry for heavily relying on Apache Hive making unstructured data in Data Lake have a structure and because Hive didn’t track data at a file-level but rather at a folder-level, so if we needed to make an update a single row in the file, we would need to re-write the whole folder again. Think of it like a folder containing 50 physical pages of text. If you want to change just one sentence on Page 42, Hive forces you to modify Page 42 and then re-write all 50 pages completely from scratch because it treats the folder as an inseparable bundle.</p>
+</blockquote>
+
+<p>In contrast, modern open table formats use the manifest file to provide file-level tracking. If you need to make a change on Page 42, the engine surgically targets and updates only that 1 page (Page 42). Under the hood, this precision is handled using one of two concepts:</p>
+
+<h3 id="copy-on-write">Copy-on-Write</h3>
+
+<p>The engine takes the original <code class="language-plaintext highlighter-rouge">page_42_v1</code>, reads it into memory, applies your update, and writes a brand-new <code class="language-plaintext highlighter-rouge">page_42_v2</code> to your storage bucket. The old file is left completely untouched, and the manifest index simply shifts its pointer to the new version.</p>
+
+<h3 id="merge-on-read">Merge-on-Read</h3>
+
+<p>Instead of rewriting any major data files, this method keeps the original <code class="language-plaintext highlighter-rouge">page_42_v1</code> completely as it is. It writes a separate, lightweight text file containing only the specific delta (the update/delete action). When you query or read the data through an engine like Apache Spark or Amazon Athena, the engine pulls both the old file and the tiny delta file simultaneously, merging them in memory on the fly to show you the updated data instantly.</p>]]></content><author><name>Neha Thakur</name></author><summary type="html"><![CDATA[Data Warehouse vs Data Lake vs Data Lakehouse]]></summary></entry></feed>
