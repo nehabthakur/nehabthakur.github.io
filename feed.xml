@@ -1,4 +1,86 @@
-<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator><link href="https://nehabthakur.github.io/feed.xml" rel="self" type="application/atom+xml" /><link href="https://nehabthakur.github.io/" rel="alternate" type="text/html" /><updated>2026-10-29T13:54:48+00:00</updated><id>https://nehabthakur.github.io/feed.xml</id><title type="html">Neha Thakur</title><subtitle>Hi, I&apos;m Neha. I&apos;m documenting my learning notes in this blog. This is a personal blog and all opinions are my own.</subtitle><author><name>Neha Thakur</name></author><entry><title type="html">Evolution of Data Storage Layers</title><link href="https://nehabthakur.github.io/2026/10/29/evolution-of-data-storage-layers.html" rel="alternate" type="text/html" title="Evolution of Data Storage Layers" /><published>2026-10-29T00:00:00+00:00</published><updated>2026-10-29T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/10/29/evolution-of-data-storage-layers</id><content type="html" xml:base="https://nehabthakur.github.io/2026/10/29/evolution-of-data-storage-layers.html"><![CDATA[<p>In the Data Engineering Lifecycle, Data Storage Layer spans across all the other layers and hence is a backbone of your entire data architecture. And the data can be stored anywhere from databases, data warehouses, data lakes. But how these systems handle data is vastly different and the storage option you select depends on the business use case and how the downstream app consumes them.</p>
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator><link href="https://nehabthakur.github.io/feed.xml" rel="self" type="application/atom+xml" /><link href="https://nehabthakur.github.io/" rel="alternate" type="text/html" /><updated>2026-10-30T13:17:15+00:00</updated><id>https://nehabthakur.github.io/feed.xml</id><title type="html">Neha Thakur</title><subtitle>Hi, I&apos;m Neha. I&apos;m documenting my learning notes in this blog. This is a personal blog and all opinions are my own.</subtitle><author><name>Neha Thakur</name></author><entry><title type="html">Deep Dive into Delta Lake</title><link href="https://nehabthakur.github.io/2026/10/30/deep-dive-into-delta-lake.html" rel="alternate" type="text/html" title="Deep Dive into Delta Lake" /><published>2026-10-30T00:00:00+00:00</published><updated>2026-10-30T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/10/30/deep-dive-into-delta-lake</id><content type="html" xml:base="https://nehabthakur.github.io/2026/10/30/deep-dive-into-delta-lake.html"><![CDATA[<h2 id="history">History</h2>
+
+<p>As you might already know, the creators of Apache Spark founded Databricks, and initially used Spark along with Apache Hive Metastore for their big data processing. However, as I have discussed in my previous post, Apache Hive tracked files strictly at folder/partition level and if you needed to make an update to a single row, you’d have to swap out and rewrite the entire folder. This means it was highly inefficient for writes, and if a write failed halfway through, it would leave partially written files behind that readers would treat as valid data. Furthermore, Spark pipelines running on cloud object storage like Amazon S3 lacked ACID properties, which led to data corruption and partially written data folders when processing jobs crashed.</p>
+
+<p>To solve this problem, Databricks built Delta Lake around 2017, which introduced a centralised transaction log (<code class="language-plaintext highlighter-rouge">_delta_log</code>). It was open-sourced in April 2019 and later that year moved to the Linux Foundation.</p>
+
+<h2 id="a-quick-recap">A Quick Recap</h2>
+
+<p>Delta Lake is among the three most popular and most used Open Table Formats (OTFs) used in production today. Like other OTFs, Delta Lake provides ACID compliance, Schema Evolution, Data Versioning, and reduces vendor lock-in.</p>
+
+<h2 id="architecture">Architecture</h2>
+
+<p><img src="/assets/images/delta-lake-architecture.jpg" alt="Delta Lake architecture: Spark reads the _delta_log first, then reads and writes Parquet data files in an S3 bucket" />
+<em>Note: The <code class="language-plaintext highlighter-rouge">_delta_log</code> file names in the diagram are shortened for readability. Actual commit files are zero-padded to 20 digits (e.g., <code class="language-plaintext highlighter-rouge">00000000000000000000.json</code>).</em></p>
+
+<p>Let’s start from the beginning, you land/dump your raw data into an object storage (like S3).</p>
+
+<p>Using a processing engine, primarily Apache Spark, you write the data out directly as Delta format, which consists of standard Apache Parquet files (a highly compressed, columnar format):</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">df</span><span class="p">.</span><span class="n">write</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="sh">"</span><span class="s">delta</span><span class="sh">"</span><span class="p">).</span><span class="nf">save</span><span class="p">(</span><span class="sh">"</span><span class="s">s3://my-bucket/delta-table</span><span class="sh">"</span><span class="p">)</span>
+</code></pre></div></div>
+
+<p>The moment an engine executes this command, it first writes the Parquet data files and then creates a <code class="language-plaintext highlighter-rouge">_delta_log/</code> folder with a commit that lists them. If the job crashes before the commit, readers never see those files. This directory is now a Delta Table.</p>
+
+<p>Every time an engine makes changes to this table, Delta Lake makes an entry in the <code class="language-plaintext highlighter-rouge">_delta_log/</code> using sequential, numbered JSON text files (e.g., <code class="language-plaintext highlighter-rouge">00000000000000000000.json</code>, <code class="language-plaintext highlighter-rouge">00000000000000000001.json</code>, <code class="language-plaintext highlighter-rouge">00000000000000000002.json</code>). Each of these entries is called a commit and states exactly which files were added or removed, along with any schema changes.</p>
+
+<p>A commit only succeeds if the writer is the first one to create the next numbered JSON file. If two writers try to create the same file at the same time, one wins. If the changes don’t conflict, the other writer retries; if they do, it fails. This is how Delta Lake makes sure that concurrent writes don’t step on each other. On S3, writing from multiple clusters historically needed a DynamoDB-backed log store, because S3 couldn’t guarantee that only one writer creates a file.</p>
+
+<p>When a query engine wants to read the data, it reads these JSON files first to figure out which Parquet files are the latest and valid. Because the number of commits can grow tremendously over time, reading hundreds of JSON files from start to finish would eventually become slow. To prevent this, after every 10 commits, Delta Lake automatically creates a checkpoint Parquet file (e.g., <code class="language-plaintext highlighter-rouge">00000000000000000010.checkpoint.parquet</code>), which captures the full state of the table at that point. A reader can then start from the latest checkpoint and only read the few JSON commits after it.</p>
+
+<h2 id="performance">Performance</h2>
+
+<p>There are a lot of optimizations you can do in terms of reads and writes with Delta Lake, some of the important ones are:</p>
+
+<h3 id="z-ordering">Z-Ordering</h3>
+
+<p>Delta Lake colocates rows with similar values in the chosen columns in the same files. Since Delta Lake stores the min/max values of the first 32 columns (by default) for every file in its <code class="language-plaintext highlighter-rouge">_delta_log</code>, the engine can skip the files that can’t match your <code class="language-plaintext highlighter-rouge">WHERE</code> clause, reducing the amount of data scanned and speeding up queries.</p>
+
+<p>Delta Lake doesn’t automatically guess which data is related. Instead, you would analyse your most frequent query <code class="language-plaintext highlighter-rouge">WHERE</code> clauses and explicitly run an <code class="language-plaintext highlighter-rouge">OPTIMIZE</code> command:</p>
+
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">OPTIMIZE</span> <span class="n">my_delta_table</span> <span class="n">ZORDER</span> <span class="k">BY</span> <span class="p">(</span><span class="n">customer_id</span><span class="p">,</span> <span class="n">country</span><span class="p">)</span>
+</code></pre></div></div>
+
+<p>Delta Lake then uses a mathematical concept called Space-Filling Curve (specifically a Morton Curve / Z-Order curve), where it takes the binary representations of the values in those columns and zips them together like a deck of cards to create a single number (Z-value) for each row, and it then sorts the data by this new Z-value before writing the rows into Parquet.</p>
+
+<h4 id="challenges-with-z-ordering">Challenges with Z-Ordering</h4>
+
+<ul>
+  <li><strong>Curse of Dimensionality:</strong> Z-ordering works well with 2 or 3 columns, but it breaks down when you try to order 5 or 6 columns. If you intertwine two decks of cards (Columns A and B), the pattern is a tight A B A B A B…. But if you intertwine 5 columns, the pattern stretches out to A B C D E A B C D E…. This stretches the rows that share the same value for Column A wildly far apart across files, diluting the sorting effectiveness for each column.</li>
+  <li><strong>Query Pattern Changes:</strong> If your business needs change and you need to filter by a brand new column, you have to redo the Z-ordering process from scratch across your historical data.</li>
+  <li><strong>High Write/Compute Costs:</strong> Because Z-ordering requires a full sort and isn’t incremental, running it forces your Spark cluster to read, shuffle, and rewrite massive amounts of data from scratch, resulting in heavy compute bills.</li>
+</ul>
+
+<h3 id="liquid-clustering-the-successor-to-z-ordering">Liquid Clustering: The Successor to Z-Ordering</h3>
+
+<p>Liquid Clustering replaces the rigid bit-math of Z-Ordering with a fluid spatial clustering algorithm (built on Hilbert curves). When new data arrives, Liquid Clustering doesn’t sort the whole historical table. Instead, it writes the new data quickly into separate files in your object storage. When you trigger an <code class="language-plaintext highlighter-rouge">OPTIMIZE</code> command, it uses the Hilbert curve algorithm to cluster only the data that isn’t clustered yet, leaving the already clustered files alone. This makes ordering significantly faster and cheaper. Because of the spatial curve design, it can cluster by up to 4 columns with better data skipping than Z-ordering on the same columns.</p>
+
+<p>And if your query patterns change, you can simply change the clustering columns without rewriting your existing data:</p>
+
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">ALTER</span> <span class="k">TABLE</span> <span class="n">my_delta_table</span> <span class="k">CLUSTER</span> <span class="k">BY</span> <span class="p">(</span><span class="n">customer_id</span><span class="p">,</span> <span class="n">order_date</span><span class="p">)</span>
+</code></pre></div></div>
+
+<p>The existing data keeps its old clustering until later <code class="language-plaintext highlighter-rouge">OPTIMIZE</code> runs re-cluster it with the new columns.</p>
+
+<p>Liquid Clustering replaces both partitioning and Z-Ordering, so it can’t be combined with either of them. It started on Databricks and is now available in open-source Delta Lake 3.x.</p>
+
+<h3 id="compaction-of-files">Compaction of Files</h3>
+
+<p>In streaming or high-frequency batch workloads, data is often written into S3 in small, fragmented files. This causes massive metadata read overhead. Query engines perform far better on fewer, larger files, and Delta Lake has a default target file size of 1 GB for <code class="language-plaintext highlighter-rouge">OPTIMIZE</code> (which is fully adjustable; on Databricks it is tuned automatically based on table size).</p>
+
+<p>To fix this, you run an <code class="language-plaintext highlighter-rouge">OPTIMIZE</code> command (without <code class="language-plaintext highlighter-rouge">ZORDER</code>):</p>
+
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">OPTIMIZE</span> <span class="n">my_delta_table</span>
+</code></pre></div></div>
+
+<p>Delta Lake reads its transaction log to check for Parquet data files that are significantly smaller than the target size. The Spark engine reads these tiny files into cluster memory, brings them together logically, and merges them into one or more files of around 1 GB. Delta Lake then writes a new JSON file to the <code class="language-plaintext highlighter-rouge">_delta_log/</code> to commit this update, marking the old small files as removed.</p>
+
+<h2 id="limitations">Limitations</h2>
+
+<ul>
+  <li><strong>Storage Bloat:</strong> Because Delta Lake guarantees ACID compliance and Time Travel, it never deletes or overwrites an old file during a compaction or an update. It simply flags it as removed in the log. This causes massive file accumulation and storage bloat in your S3 bucket, meaning you must regularly monitor and run a <code class="language-plaintext highlighter-rouge">VACUUM</code> command to physically purge old files. By default, <code class="language-plaintext highlighter-rouge">VACUUM</code> keeps files from the last 7 days, and once old files are purged, you can no longer time travel to the versions that used them.</li>
+  <li><strong>Tied to Databricks and Spark:</strong> As Delta Lake is tightly woven and heavily optimized for Databricks and Spark runtimes, non-Spark engines like Presto, Trino and Amazon Athena historically struggled to read Delta tables natively, requiring external symlink manifest files to understand which Parquet files were active. Today, Trino and Amazon Athena can read Delta tables natively. Delta Lake has also introduced Universal Format (UniForm), which writes Iceberg metadata alongside the Delta log so other engines can read Delta tables as if they were Apache Iceberg tables. But these engines only get read access, and you still need a catalog like Unity Catalog to expose that metadata, adding to architectural complexity.</li>
+</ul>]]></content><author><name>Neha Thakur</name></author><summary type="html"><![CDATA[History, architecture, performance optimizations and limitations of Delta Lake]]></summary></entry><entry><title type="html">Evolution of Data Storage Layers</title><link href="https://nehabthakur.github.io/2026/10/29/evolution-of-data-storage-layers.html" rel="alternate" type="text/html" title="Evolution of Data Storage Layers" /><published>2026-10-29T00:00:00+00:00</published><updated>2026-10-29T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/10/29/evolution-of-data-storage-layers</id><content type="html" xml:base="https://nehabthakur.github.io/2026/10/29/evolution-of-data-storage-layers.html"><![CDATA[<p>In the Data Engineering Lifecycle, Data Storage Layer spans across all the other layers and hence is a backbone of your entire data architecture. And the data can be stored anywhere from databases, data warehouses, data lakes. But how these systems handle data is vastly different and the storage option you select depends on the business use case and how the downstream app consumes them.</p>
 
 <h2 id="databases">Databases</h2>
 
