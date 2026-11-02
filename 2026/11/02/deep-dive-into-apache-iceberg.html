@@ -110,13 +110,52 @@ Hive was built for on-prem storage devices and completely broke when businesses 
 <span class="k">AS</span> <span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">reviews_raw</span><span class="p">;</span>
 </code></pre></div></div>
 
-<p>The catalog (Glue Data Catalog, or any other data catalog like Apache Polaris) doesn’t track the Parquet files. It stores a single pointer to the table’s current <code class="language-plaintext highlighter-rouge">metadata.json</code> file. metadata.json is the top layer: it holds the schema, partition spec, and the list of snapshots(what are snapshots?). Below that is a manifest list per snapshot, then manifest files, which point to the actual Parquet files at the bottom and store their partition values and column stats.</p>
+<p>The catalog (Glue Data Catalog, or any other data catalog like Apache Polaris) doesn’t track the Parquet files. It stores a single pointer to the table’s current <code class="language-plaintext highlighter-rouge">metadata.json</code> file. metadata.json is the top layer: it holds the schema, partition spec, and the list of snapshots (a snapshot is the state of the table after a commit, i.e. the list of data files that make up the table at that point in time; every commit creates a new one, and older snapshots are what make time travel possible). Below that is a manifest list per snapshot, then manifest files, which point to the actual Parquet files at the bottom and store their partition values and column stats.</p>
 
 <p>Whenever you make some change to the data, Iceberg creates updated files without overwriting the previous ones. New data files don’t go into an existing manifest, since manifests are immutable too. Each commit writes a new manifest for the files it added, and a new manifest list that points to the old, unchanged manifests plus the new one. Then it writes a new metadata.json with the new snapshot, and the catalog pointer is atomically swapped to it.</p>
 
 <p><img src="/assets/images/iceberg-snapshots.svg" alt="Two Iceberg snapshots: snapshot 2's manifest list reuses manifest A from snapshot 1 and adds a new manifest B for the newly written data file" /></p>
 
-<h2 id="hidden-partitioning">Hidden Partitioning</h2>
+<h2 id="key-features">Key Features</h2>
+
+<p>Just like any other OTF, Apache Iceberg also provides time travelling (data versioning), schema evolution, partition evolution (covered under Performance), ACID transactions and concurrency (OCC).</p>
+
+<blockquote>
+  <p><strong>Side note: Optimistic Concurrency Control (OCC)</strong></p>
+
+  <p>As we saw earlier, Hive used pessimistic locking: it locked the table or partition before a write, and every other writer had to wait in a queue. OCC takes the opposite approach. It assumes conflicts are rare, so writers don’t lock anything; they all work in parallel and only check for conflicts at the very end, when they commit.</p>
+
+  <p>In Iceberg, a write works like this:</p>
+
+  <ol>
+    <li>The writer reads the current <code class="language-plaintext highlighter-rouge">metadata.json</code> (say <code class="language-plaintext highlighter-rouge">v1</code>) and treats it as its starting point.</li>
+    <li>It writes its new data files, manifest, manifest list and a new <code class="language-plaintext highlighter-rouge">metadata.json</code> (<code class="language-plaintext highlighter-rouge">v2</code>). Nobody else can see these files yet.</li>
+    <li>It asks the catalog to swap the table pointer from <code class="language-plaintext highlighter-rouge">v1</code> to <code class="language-plaintext highlighter-rouge">v2</code>, <strong>only if the pointer is still at <code class="language-plaintext highlighter-rouge">v1</code></strong>. The catalog does this check and swap as one atomic step.</li>
+  </ol>
+
+  <p>If another writer committed first, the pointer has already moved, so the swap fails. The writer then reads the latest metadata and checks whether the other commit actually conflicts with its own (for example, both updated or deleted rows in the same data files). If there’s no conflict, like two writers appending data to different partitions, it reuses the data files it already wrote, regenerates only the metadata files on top of the latest version, and retries the swap. If there is a conflict, the commit fails and the job has to be rerun.</p>
+
+  <p>Imagine two people editing the same Wikipedia page. Neither of them locks the page while they type, but when you hit save, Wikipedia checks whether someone else saved since you started. If they did, you have to reconcile your changes with theirs before your edit goes through.</p>
+
+  <p>This is the same idea as Delta Lake, where the first writer to create the next numbered JSON file in <code class="language-plaintext highlighter-rouge">_delta_log</code> wins. In Iceberg, the “winner” is decided by the catalog’s pointer swap instead.</p>
+
+  <p>Note that OCC doesn’t affect reads at all; readers always just follow the catalog pointer to the latest committed snapshot. The challenges come from commits, in two cases:</p>
+
+  <ul>
+    <li><strong>Multiple writers committing at the same time:</strong> only one pointer swap can win at a time, so the more writers commit at once, the more of them fail and retry. Retrying an append is cheap, since only the metadata files are regenerated, but with many writers committing frequently, jobs spend more and more time retrying and can fail once they run out of retries.</li>
+    <li><strong>Multiple jobs changing the same data files:</strong> for example, an UPDATE/DELETE job and a compaction job both rewriting the same files. Here a retry can’t simply be stacked on top of the other commit, so one of the jobs fails and has to be rerun.</li>
+  </ul>
+
+  <p>So how does this work with streaming, where data never stops arriving? Streaming engines continuously write data files, but only commit once in a while. Spark Structured Streaming commits once per micro-batch (e.g. every minute), and Flink has many parallel tasks writing files with a single committer committing them once per checkpoint. So even a job with hundreds of parallel tasks only makes about one commit per minute. The tradeoff is that data only becomes visible to readers after each commit, and frequent commits leave behind lots of small files and snapshots that need regular compaction and snapshot expiry.</p>
+
+  <p>Iceberg works well with a handful of writers committing every few seconds to minutes, but it wasn’t built for many jobs constantly upserting (updating or inserting rows, which means writing new files and committing each time) into the same table. This is exactly the problem Apache Hudi was built for at Uber, where streaming upserts were the main use case. Hudi 1.0 even introduced non-blocking concurrency control, which lets multiple writers write to the same table without failing each other. More on that in my next post on Hudi!</p>
+</blockquote>
+
+<h2 id="performance">Performance</h2>
+
+<p>There are a lot of optimizations you can do in terms of reads and writes with Apache Iceberg, some of the important ones are:</p>
+
+<h3 id="hidden-partitioning">Hidden Partitioning</h3>
 
 <p>We initially define which columns we want to partition the data on, for eg: We might want to partition data on the column <code class="language-plaintext highlighter-rouge">country</code>, so that all the rows with country = ‘UK’ are stored together, all the rows with country = ‘US’ are stored together, and so on. But unlike Hive, we don’t need to create or fill in a separate partition column ourselves, Iceberg does it for us, which is why it is called “hidden” partitioning.</p>
 
@@ -175,7 +214,7 @@ Hive was built for on-prem storage devices and completely broke when businesses 
   </tbody>
 </table>
 
-<h3 id="what-happens-when-new-data-arrives">What happens when new data arrives?</h3>
+<h4 id="what-happens-when-new-data-arrives">What happens when new data arrives?</h4>
 
 <p>A partition isn’t a single file, it’s a group of files that share the same partition value, and every data file holds rows from only one partition. Since data files are immutable, if you add new rows for country = ‘UK’, Iceberg doesn’t append them to the existing UK file. It writes a <strong>new</strong> data file, tags it <code class="language-plaintext highlighter-rouge">country=UK</code> in a new manifest, and commits a new snapshot. Now the UK partition is made up of two files, and when you query <code class="language-plaintext highlighter-rouge">WHERE country = 'UK'</code>, Iceberg collects every file whose manifest entry says <code class="language-plaintext highlighter-rouge">country=UK</code> and skips the rest.</p>
 
@@ -183,9 +222,9 @@ Hive was built for on-prem storage devices and completely broke when businesses 
 
 <p><img src="/assets/images/iceberg-hidden-partitioning.svg" alt="Hidden partitioning: a query on 2026-11-02 skips manifest C using the manifest list ranges, then reads only the 2026-11-02 files from manifests A and B, which were written by different commits" /></p>
 
-<p>Over time, frequent small writes leave many small files in each partition. Compaction (<code class="language-plaintext highlighter-rouge">OPTIMIZE ... REWRITE DATA USING BIN_PACK</code> in Athena) reads these small files and writes them out as one bigger file per partition, again as new files, while the old ones stay around for time travel until you expire them.</p>
+<p>This also means that frequent writes leave many small files in each partition, more on that in Compaction below.</p>
 
-<h3 id="partition-evolution">Partition Evolution</h3>
+<h4 id="partition-evolution">Partition Evolution</h4>
 
 <p>Because queries never reference the partition layout directly, you can change how a table is partitioned without rewriting any of the existing data. For example, if your data grows and daily partitions become too big, you can switch to hourly partitions:</p>
 
@@ -194,45 +233,6 @@ Hive was built for on-prem storage devices and completely broke when businesses 
 </code></pre></div></div>
 
 <p>The old data files stay in their daily partitions and new data files are written hourly. Each manifest records which partition spec it was written with, so Iceberg knows how to prune both old and new files in the same query, and none of your queries need to change.</p>
-
-<h2 id="key-features">Key Features</h2>
-
-<p>Just like any other OTF, Apache Iceberg also provides time travelling (data versioning), schema evolution, ACID transactions and concurrency (OCC).</p>
-
-<blockquote>
-  <p><strong>Side note: Optimistic Concurrency Control (OCC)</strong></p>
-
-  <p>As we saw earlier, Hive used pessimistic locking: it locked the table or partition before a write, and every other writer had to wait in a queue. OCC takes the opposite approach. It assumes conflicts are rare, so writers don’t lock anything; they all work in parallel and only check for conflicts at the very end, when they commit.</p>
-
-  <p>In Iceberg, a write works like this:</p>
-
-  <ol>
-    <li>The writer reads the current <code class="language-plaintext highlighter-rouge">metadata.json</code> (say <code class="language-plaintext highlighter-rouge">v1</code>) and treats it as its starting point.</li>
-    <li>It writes its new data files, manifest, manifest list and a new <code class="language-plaintext highlighter-rouge">metadata.json</code> (<code class="language-plaintext highlighter-rouge">v2</code>). Nobody else can see these files yet.</li>
-    <li>It asks the catalog to swap the table pointer from <code class="language-plaintext highlighter-rouge">v1</code> to <code class="language-plaintext highlighter-rouge">v2</code>, <strong>only if the pointer is still at <code class="language-plaintext highlighter-rouge">v1</code></strong>. The catalog does this check and swap as one atomic step.</li>
-  </ol>
-
-  <p>If another writer committed first, the pointer has already moved, so the swap fails. The writer then reads the latest metadata and checks whether the other commit actually conflicts with its own (for example, both updated or deleted rows in the same data files). If there’s no conflict, like two writers appending data to different partitions, it reuses the data files it already wrote, regenerates only the metadata files on top of the latest version, and retries the swap. If there is a conflict, the commit fails and the job has to be rerun.</p>
-
-  <p>Imagine two people editing the same Wikipedia page. Neither of them locks the page while they type, but when you hit save, Wikipedia checks whether someone else saved since you started. If they did, you have to reconcile your changes with theirs before your edit goes through.</p>
-
-  <p>This is the same idea as Delta Lake, where the first writer to create the next numbered JSON file in <code class="language-plaintext highlighter-rouge">_delta_log</code> wins. In Iceberg, the “winner” is decided by the catalog’s pointer swap instead.</p>
-
-  <p>Note that OCC doesn’t affect reads at all; readers always just follow the catalog pointer to the latest committed snapshot. The challenges come from commits, in two cases:</p>
-
-  <ul>
-    <li><strong>Multiple writers committing at the same time:</strong> only one pointer swap can win at a time, so the more writers commit at once, the more of them fail and retry. Retrying an append is cheap, since only the metadata files are regenerated, but with many writers committing frequently, jobs spend more and more time retrying and can fail once they run out of retries.</li>
-    <li><strong>Multiple jobs changing the same data files:</strong> for example, an UPDATE/DELETE job and a compaction job both rewriting the same files. Here a retry can’t simply be stacked on top of the other commit, so one of the jobs fails and has to be rerun.</li>
-  </ul>
-
-  <p>So how does this work with streaming, where data never stops arriving? Streaming engines continuously write data files, but only commit once in a while. Spark Structured Streaming commits once per micro-batch (e.g. every minute), and Flink has many parallel tasks writing files with a single committer committing them once per checkpoint. So even a job with hundreds of parallel tasks only makes about one commit per minute. The tradeoff is that data only becomes visible to readers after each commit, and frequent commits leave behind lots of small files and snapshots that need regular compaction and snapshot expiry.</p>
-
-  <p>Iceberg works well with a handful of writers committing every few seconds to minutes, but it wasn’t built for many jobs constantly upserting (updating or inserting rows, which means writing new files and committing each time) into the same table. This is exactly the problem Apache Hudi was built for at Uber, where streaming upserts were the main use case. Hudi 1.0 even introduced non-blocking concurrency control, which lets multiple writers write to the same table without failing each other. More on that in my next post on Hudi!</p>
-</blockquote>
-
-<h2 id="performance">Performance</h2>
-
-<p>There are a lot of optimizations you can do in terms of reads and writes with Apache Iceberg, some of the important ones are:</p>
 
 <h3 id="file-pruning">File Pruning</h3>
 
