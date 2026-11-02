@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator><link href="https://nehabthakur.github.io/feed.xml" rel="self" type="application/atom+xml" /><link href="https://nehabthakur.github.io/" rel="alternate" type="text/html" /><updated>2026-11-02T15:30:43+00:00</updated><id>https://nehabthakur.github.io/feed.xml</id><title type="html">Neha Thakur</title><subtitle>Hi, I&apos;m Neha. I&apos;m documenting my learning notes in this blog. This is a personal blog and all opinions are my own.</subtitle><author><name>Neha Thakur</name></author><entry><title type="html">Deep Dive into Apache Iceberg</title><link href="https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg.html" rel="alternate" type="text/html" title="Deep Dive into Apache Iceberg" /><published>2026-11-02T00:00:00+00:00</published><updated>2026-11-02T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg</id><content type="html" xml:base="https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg.html"><![CDATA[<p>In this post, we’ll dive deep into Apache Iceberg.</p>
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator><link href="https://nehabthakur.github.io/feed.xml" rel="self" type="application/atom+xml" /><link href="https://nehabthakur.github.io/" rel="alternate" type="text/html" /><updated>2026-11-02T16:41:06+00:00</updated><id>https://nehabthakur.github.io/feed.xml</id><title type="html">Neha Thakur</title><subtitle>Hi, I&apos;m Neha. I&apos;m documenting my learning notes in this blog. This is a personal blog and all opinions are my own.</subtitle><author><name>Neha Thakur</name></author><entry><title type="html">Deep Dive into Apache Iceberg</title><link href="https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg.html" rel="alternate" type="text/html" title="Deep Dive into Apache Iceberg" /><published>2026-11-02T00:00:00+00:00</published><updated>2026-11-02T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg</id><content type="html" xml:base="https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg.html"><![CDATA[<p>In this post, we’ll dive deep into Apache Iceberg.</p>
 
 <h2 id="history">History</h2>
 
@@ -44,7 +44,7 @@ Hive was built for on-prem storage devices and completely broke when businesses 
 
 <h2 id="key-features">Key Features</h2>
 
-<p>Just like any other OTF, Apache Iceberg also provides time travelling (data versioning), schema evolution, partition evolution (covered under Performance), ACID transactions and concurrency (OCC).</p>
+<p>Just like any other OTFs, Apache Iceberg also provides time travelling (data versioning), schema evolution, partition evolution (covered under Performance), ACID transactions and concurrency (OCC).</p>
 
 <blockquote>
   <p><strong>Side note: Optimistic Concurrency Control (OCC)</strong></p>
@@ -166,7 +166,7 @@ Hive was built for on-prem storage devices and completely broke when businesses 
 
 <ol>
   <li><strong>Manifest list:</strong> For every manifest, the manifest list stores the range of partition values it covers. Manifests that can’t match your <code class="language-plaintext highlighter-rouge">WHERE</code> clause are skipped completely, like manifest C in the hidden partitioning diagram above.</li>
-  <li><strong>Manifest files:</strong> For every data file, the manifest stores its partition value and column statistics, such as the min/max values, null counts and value counts. Iceberg collects these for the first 100 columns by default, and the engine skips every file whose min/max range can’t contain the value you’re filtering on.</li>
+  <li><strong>Manifest files:</strong> For every data file, the manifest stores its partition value and column statistics, such as the min/max values. Iceberg collects these for the first 100 columns by default, and the engine skips every file whose min/max range can’t contain the value you’re filtering on.</li>
   <li><strong>Parquet files:</strong> Inside the files that are left, Parquet keeps its own min/max statistics per row group, so the engine can skip parts of a file too.</li>
 </ol>
 
@@ -194,19 +194,13 @@ Hive was built for on-prem storage devices and completely broke when businesses 
 
 <h3 id="snapshot-expiry">Snapshot Expiry</h3>
 
-<p>Every commit creates a new snapshot, and the old snapshots keep pointing to data files that are no longer part of the current table, so they can’t be deleted. This is what makes time travel possible, but if you never clean up, your S3 bucket and your metadata keep growing forever. Expiring snapshots removes the old snapshots from the metadata and deletes the data and metadata files that only they referenced:</p>
-
-<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">-- Athena</span>
-<span class="k">VACUUM</span> <span class="n">reviews_iceberg</span><span class="p">;</span>
-</code></pre></div></div>
-
-<p>In Athena, <code class="language-plaintext highlighter-rouge">VACUUM</code> expires snapshots older than 5 days by default (set by the <code class="language-plaintext highlighter-rouge">vacuum_max_snapshot_age_seconds</code> table property) and also deletes orphan files, which are files left behind in S3 by failed writes that no snapshot points to. In Spark, the same is done with <code class="language-plaintext highlighter-rouge">expire_snapshots</code> and <code class="language-plaintext highlighter-rouge">remove_orphan_files</code>. Just like <code class="language-plaintext highlighter-rouge">VACUUM</code> in Delta Lake, once a snapshot is expired, you can no longer time travel to it.</p>
+<p>Every commit creates a new snapshot, and the old snapshots keep pointing to data files that are no longer part of the current table, so they can’t be deleted. This is what makes time travel possible, but if you never clean up, your S3 bucket and your metadata keep growing forever. Expiring snapshots removes the old snapshots from the metadata and deletes the data and metadata files that only they referenced, so choosing the right strategy for snapshot expiry is important.</p>
 
 <h2 id="limitations">Limitations</h2>
 
 <ul>
-  <li><strong>Maintenance overhead:</strong> Because files are immutable and every commit adds new data and metadata files, an Iceberg table doesn’t stay fast on its own. You need to regularly run compaction, rewrite manifests and expire snapshots, otherwise reads slow down and storage keeps growing. Managed options like AWS Glue Data Catalog’s automatic table optimization and Amazon S3 Tables can run these for you, but at an extra cost.</li>
-  <li><strong>Catalog dependency:</strong> Every read and commit goes through the catalog, so every engine that reads or writes a table has to use the same catalog. Catalogs like Glue, Polaris, Nessie or Hive Metastore also support different features, and moving tables from one catalog to another isn’t trivial.</li>
+  <li><strong>Maintenance overhead:</strong> Because files are immutable and every commit adds new data and metadata files. You need to regularly run compaction, rewrite manifests and expire snapshots, otherwise reads slow down and storage keeps growing making the Iceberg table slow.</li>
+  <li><strong>Catalog dependency:</strong> Every read and commit goes through the catalog, so every engine (Spark, Athena, Trino, Presto, etc.) that reads or writes a table has to use the same catalog.</li>
   <li><strong>Uneven engine support:</strong> Iceberg is an open spec, but each engine implements a different part of it. For example, Athena doesn’t support partition evolution and only supports bin-packing for compaction, and newer features from the v3 spec, like deletion vectors, aren’t supported by every engine yet. So what you can do with a table depends on the engine you use.</li>
   <li><strong>Frequent upserts and concurrent writes:</strong> As discussed in the OCC side note, many writers committing at the same time, or jobs constantly updating the same data files, lead to retries and failed commits. Copy-on-write rewrites whole files for small updates, and merge-on-read slows down reads until delete files are compacted.</li>
 </ul>]]></content><author><name>Neha Thakur</name></author><summary type="html"><![CDATA[History, architecture, performance optimizations and limitations of Apache Iceberg]]></summary></entry><entry><title type="html">Deep Dive into Delta Lake</title><link href="https://nehabthakur.github.io/2026/10/30/deep-dive-into-delta-lake.html" rel="alternate" type="text/html" title="Deep Dive into Delta Lake" /><published>2026-10-30T00:00:00+00:00</published><updated>2026-10-30T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/10/30/deep-dive-into-delta-lake</id><content type="html" xml:base="https://nehabthakur.github.io/2026/10/30/deep-dive-into-delta-lake.html"><![CDATA[<h2 id="history">History</h2>
