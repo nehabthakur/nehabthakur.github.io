@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 540" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#aaa"/>
+    </marker>
+  </defs>
+
+  <rect width="800" height="540" fill="#ffffff"/>
+
+  <!-- Catalog -->
+  <rect x="440" y="20" width="240" height="56" rx="10" fill="#ede7f6" stroke="#7e57c2" stroke-width="2"/>
+  <text x="560" y="44" text-anchor="middle" font-size="15" font-weight="600" fill="#311b92">Catalog</text>
+  <text x="560" y="64" text-anchor="middle" font-size="12.5" fill="#4527a0">pointer swapped atomically to v2</text>
+
+  <!-- Column labels -->
+  <text x="200" y="106" text-anchor="middle" font-size="14" font-weight="600" fill="#757575">Snapshot 1 (initial write)</text>
+  <text x="540" y="106" text-anchor="middle" font-size="14" font-weight="600" fill="#424242">Snapshot 2 (INSERT)</text>
+
+  <!-- metadata.json -->
+  <rect x="80" y="122" width="240" height="56" rx="10" fill="#f5f5f5" stroke="#90a4ae" stroke-width="2"/>
+  <text x="200" y="146" text-anchor="middle" font-size="15" font-weight="600" fill="#546e7a">00001-….metadata.json</text>
+  <text x="200" y="166" text-anchor="middle" font-size="12.5" fill="#78909c">previous version (kept)</text>
+
+  <rect x="440" y="122" width="240" height="56" rx="10" fill="#e3f2fd" stroke="#1e88e5" stroke-width="2"/>
+  <text x="560" y="146" text-anchor="middle" font-size="15" font-weight="600" fill="#0d47a1">00002-….metadata.json</text>
+  <text x="560" y="166" text-anchor="middle" font-size="12.5" fill="#1565c0">snapshots: [1, 2] · current = 2</text>
+
+  <!-- manifest lists -->
+  <rect x="80" y="218" width="240" height="56" rx="10" fill="#f5f5f5" stroke="#90a4ae" stroke-width="2"/>
+  <text x="200" y="242" text-anchor="middle" font-size="15" font-weight="600" fill="#546e7a">manifest list 1</text>
+  <text x="200" y="262" text-anchor="middle" font-size="12.5" fill="#78909c">→ manifest A</text>
+
+  <rect x="440" y="218" width="240" height="56" rx="10" fill="#e0f2f1" stroke="#00897b" stroke-width="2"/>
+  <text x="560" y="242" text-anchor="middle" font-size="15" font-weight="600" fill="#004d40">manifest list 2</text>
+  <text x="560" y="262" text-anchor="middle" font-size="12.5" fill="#00695c">→ manifest A + manifest B</text>
+
+  <!-- manifests -->
+  <rect x="190" y="322" width="220" height="56" rx="10" fill="#e8f5e9" stroke="#43a047" stroke-width="2"/>
+  <text x="300" y="346" text-anchor="middle" font-size="15" font-weight="600" fill="#1b5e20">manifest A</text>
+  <text x="300" y="366" text-anchor="middle" font-size="12.5" fill="#2e7d32">reused, not rewritten</text>
+
+  <rect x="500" y="322" width="220" height="56" rx="10" fill="#e8f5e9" stroke="#43a047" stroke-width="3"/>
+  <text x="610" y="346" text-anchor="middle" font-size="15" font-weight="600" fill="#1b5e20">manifest B (new)</text>
+  <text x="610" y="366" text-anchor="middle" font-size="12.5" fill="#2e7d32">lists only the new file</text>
+
+  <!-- data files -->
+  <rect x="130" y="430" width="150" height="48" rx="8" fill="#fff3e0" stroke="#fb8c00" stroke-width="2"/>
+  <text x="205" y="459" text-anchor="middle" font-size="14" fill="#e65100">file1.parquet</text>
+  <rect x="300" y="430" width="150" height="48" rx="8" fill="#fff3e0" stroke="#fb8c00" stroke-width="2"/>
+  <text x="375" y="459" text-anchor="middle" font-size="14" fill="#e65100">file2.parquet</text>
+  <rect x="535" y="430" width="150" height="48" rx="8" fill="#fff3e0" stroke="#fb8c00" stroke-width="3"/>
+  <text x="610" y="459" text-anchor="middle" font-size="14" fill="#e65100">file3.parquet (new)</text>
+
+  <!-- old pointers (grey) -->
+  <g stroke="#aaa" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#arrow-grey)">
+    <line x1="200" y1="178" x2="200" y2="216"/>
+    <line x1="230" y1="274" x2="270" y2="320"/>
+  </g>
+
+  <!-- current pointers -->
+  <g stroke="#555" stroke-width="1.8" fill="none" marker-end="url(#arrow)">
+    <line x1="655" y1="76"  x2="655" y2="120"/>
+    <line x1="560" y1="178" x2="560" y2="216"/>
+    <line x1="500" y1="274" x2="360" y2="320"/>
+    <line x1="590" y1="274" x2="605" y2="320"/>
+    <line x1="270" y1="378" x2="215" y2="428"/>
+    <line x1="330" y1="378" x2="365" y2="428"/>
+    <line x1="610" y1="378" x2="610" y2="428"/>
+  </g>
+
+  <text x="400" y="516" text-anchor="middle" font-size="12" fill="#757575">Nothing is overwritten: time travel to snapshot 1 still reads manifest list 1 → manifest A</text>
+</svg>

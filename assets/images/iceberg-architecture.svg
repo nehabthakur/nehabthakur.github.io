@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 620" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <rect width="800" height="620" fill="#ffffff"/>
+
+  <!-- Catalog -->
+  <rect x="260" y="20" width="280" height="64" rx="10" fill="#ede7f6" stroke="#7e57c2" stroke-width="2"/>
+  <text x="400" y="47" text-anchor="middle" font-size="16" font-weight="600" fill="#311b92">Catalog (Glue / Polaris)</text>
+  <text x="400" y="69" text-anchor="middle" font-size="13" fill="#4527a0">pointer → current metadata.json</text>
+
+  <!-- S3 bucket -->
+  <rect x="20" y="114" width="760" height="490" rx="14" fill="#fafafa" stroke="#9e9e9e" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="40" y="140" font-size="14" font-weight="600" fill="#424242">S3: s3://my-bucket/iceberg/reviews/</text>
+  <text x="40" y="168" font-size="13" fill="#757575">metadata/</text>
+
+  <!-- metadata.json -->
+  <rect x="260" y="176" width="280" height="64" rx="10" fill="#e3f2fd" stroke="#1e88e5" stroke-width="2"/>
+  <text x="400" y="203" text-anchor="middle" font-size="15" font-weight="600" fill="#0d47a1">00002-….metadata.json</text>
+  <text x="400" y="225" text-anchor="middle" font-size="12.5" fill="#1565c0">schema · partition spec · snapshots</text>
+
+  <!-- manifest list -->
+  <rect x="260" y="280" width="280" height="60" rx="10" fill="#e0f2f1" stroke="#00897b" stroke-width="2"/>
+  <text x="400" y="306" text-anchor="middle" font-size="15" font-weight="600" fill="#004d40">snap-….avro</text>
+  <text x="400" y="326" text-anchor="middle" font-size="12.5" fill="#00695c">manifest list · partition ranges per manifest</text>
+
+  <!-- manifests -->
+  <rect x="90" y="380" width="250" height="60" rx="10" fill="#e8f5e9" stroke="#43a047" stroke-width="2"/>
+  <text x="215" y="406" text-anchor="middle" font-size="15" font-weight="600" fill="#1b5e20">manifest A (….avro)</text>
+  <text x="215" y="426" text-anchor="middle" font-size="12.5" fill="#2e7d32">file paths · partition values · stats</text>
+
+  <rect x="460" y="380" width="250" height="60" rx="10" fill="#e8f5e9" stroke="#43a047" stroke-width="2"/>
+  <text x="585" y="406" text-anchor="middle" font-size="15" font-weight="600" fill="#1b5e20">manifest B (….avro)</text>
+  <text x="585" y="426" text-anchor="middle" font-size="12.5" fill="#2e7d32">file paths · partition values · stats</text>
+
+  <!-- data files -->
+  <text x="40" y="482" font-size="13" fill="#757575">data/</text>
+  <rect x="45"  y="500" width="160" height="50" rx="8" fill="#fff3e0" stroke="#fb8c00" stroke-width="2"/>
+  <text x="125" y="530" text-anchor="middle" font-size="14" fill="#e65100">file1.parquet</text>
+  <rect x="225" y="500" width="160" height="50" rx="8" fill="#fff3e0" stroke="#fb8c00" stroke-width="2"/>
+  <text x="305" y="530" text-anchor="middle" font-size="14" fill="#e65100">file2.parquet</text>
+  <rect x="415" y="500" width="160" height="50" rx="8" fill="#fff3e0" stroke="#fb8c00" stroke-width="2"/>
+  <text x="495" y="530" text-anchor="middle" font-size="14" fill="#e65100">file3.parquet</text>
+  <rect x="595" y="500" width="160" height="50" rx="8" fill="#fff3e0" stroke="#fb8c00" stroke-width="2"/>
+  <text x="675" y="530" text-anchor="middle" font-size="14" fill="#e65100">file4.parquet</text>
+
+  <!-- arrows -->
+  <g stroke="#555" stroke-width="1.8" fill="none" marker-end="url(#arrow)">
+    <line x1="400" y1="84"  x2="400" y2="174"/>
+    <line x1="400" y1="240" x2="400" y2="278"/>
+    <line x1="360" y1="340" x2="250" y2="378"/>
+    <line x1="440" y1="340" x2="550" y2="378"/>
+    <line x1="190" y1="440" x2="135" y2="498"/>
+    <line x1="240" y1="440" x2="295" y2="498"/>
+    <line x1="560" y1="440" x2="505" y2="498"/>
+    <line x1="610" y1="440" x2="665" y2="498"/>
+  </g>
+
+  <text x="400" y="590" text-anchor="middle" font-size="12" fill="#757575">Each data file holds rows from a single partition</text>
+</svg>

@@ -1,4 +1,215 @@
-<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator><link href="https://nehabthakur.github.io/feed.xml" rel="self" type="application/atom+xml" /><link href="https://nehabthakur.github.io/" rel="alternate" type="text/html" /><updated>2026-10-30T13:36:29+00:00</updated><id>https://nehabthakur.github.io/feed.xml</id><title type="html">Neha Thakur</title><subtitle>Hi, I&apos;m Neha. I&apos;m documenting my learning notes in this blog. This is a personal blog and all opinions are my own.</subtitle><author><name>Neha Thakur</name></author><entry><title type="html">Deep Dive into Delta Lake</title><link href="https://nehabthakur.github.io/2026/10/30/deep-dive-into-delta-lake.html" rel="alternate" type="text/html" title="Deep Dive into Delta Lake" /><published>2026-10-30T00:00:00+00:00</published><updated>2026-10-30T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/10/30/deep-dive-into-delta-lake</id><content type="html" xml:base="https://nehabthakur.github.io/2026/10/30/deep-dive-into-delta-lake.html"><![CDATA[<h2 id="history">History</h2>
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator><link href="https://nehabthakur.github.io/feed.xml" rel="self" type="application/atom+xml" /><link href="https://nehabthakur.github.io/" rel="alternate" type="text/html" /><updated>2026-11-02T15:18:00+00:00</updated><id>https://nehabthakur.github.io/feed.xml</id><title type="html">Neha Thakur</title><subtitle>Hi, I&apos;m Neha. I&apos;m documenting my learning notes in this blog. This is a personal blog and all opinions are my own.</subtitle><author><name>Neha Thakur</name></author><entry><title type="html">Deep Dive into Apache Iceberg</title><link href="https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg.html" rel="alternate" type="text/html" title="Deep Dive into Apache Iceberg" /><published>2026-11-02T00:00:00+00:00</published><updated>2026-11-02T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg</id><content type="html" xml:base="https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg.html"><![CDATA[<p>In this post, we’ll dive deep into Apache Iceberg.</p>
+
+<h2 id="history">History</h2>
+
+<p>Apache Iceberg was created at Netflix around 2017 by Ryan Blue and Dan Weeks, open-sourced and donated to the Apache Software Foundation in 2018. Before Apache Iceberg, the industry widely used Apache Hive as a table format and metadata layer. Hive tracked data at the folder/directory level, which introduced severe performance and ACID compliance challenges. Although Apache Hive introduced ACID compliance in its 0.13 version (around 2014), it suffered from critical bottlenecks because data tracking remained tied to the folder level:</p>
+
+<ul>
+  <li>If a user or an execution engine like Spark needed to find, read, or change data within a particular file, it had to scan all the files inside that folder partition. Because Hive tracked data at the folder level, it could not pinpoint a specific file path directly. It first had to <strong>list</strong> every file in the folder, which is slow on object stores like S3, and since Hive kept no per-file statistics (like min/max values), it couldn’t skip files that didn’t contain the data it needed. Imagine you have a box (folder) containing 50 books (files); to find a book titled “abc”, you have to dig through the entire box because there is no catalog telling you exactly where that book sits.</li>
+  <li>To provide ACID transactions, Hive relied on a relational database (like MySQL) to place a lock on the entire table or partition during a write operation. This drastically limited concurrent writes; other writers were forced to wait in a queue, frequently leading to performance timeouts.</li>
+  <li>Hive did not maintain an explicit, deterministic ledger of file changes. Instead, changes generated a chaotic trail of small delta subfolders. Because the metastore tracked transaction IDs, but not which files belonged to which version, background garbage collection and compaction routines had to heavily scan the physical storage layout, causing severe performance degradation.</li>
+</ul>
+
+<h3 id="a-quick-history-about-hive">A Quick History about Hive</h3>
+
+<p>Hive was built at Meta (Facebook) to query massive amounts of data. The underlying data was stored on HDFS (Hadoop Distributed File System). Because querying data directly on HDFS required engineers to write complex, low-level MapReduce Java programs, it was highly inaccessible to business analysts and non-programmers.</p>
+
+<p>To solve this, the engineers built a middle layer called Hive. Hive allowed users to write familiar SQL-like queries using a dialect called HQL (Hive Query Language). Hive would then automatically take those SQL(HQL) queries, translate them into MapReduce jobs under the hood, and run them against the data hosted on HDFS.
+Hive was built for on-prem storage devices and completely broke when businesses started moving to cloud object stores like Amazon S3, GCP and Azure ALDS, as these are flat files and not folder level stores.</p>
+
+<p>I’m going to write about HDFS, MapReduce in my future blogs, so stay tuned.</p>
+
+<h2 id="architecture">Architecture</h2>
+
+<p>Iceberg organizes metadata in a hierarchical, tree-based structure (Catalog -&gt; Metadata File -&gt; Manifest List -&gt; Manifest Files -&gt; Data Files).</p>
+
+<p><img src="/assets/images/iceberg-architecture.svg" alt="Apache Iceberg architecture: the catalog points to the current metadata.json, which points to a manifest list, which points to manifest files, which point to Parquet data files in S3" /></p>
+
+<p>You upload raw files to an S3 bucket -&gt; create a table on top of them in Glue Data Catalog (or can your OSS Apache Polaries) -&gt; then use Athena/Spark/Trino or any engine of your choice to write that data into an Iceberg table, as Parquet (columnar file format) data files. In Athena this is a CTAS query with <code class="language-plaintext highlighter-rouge">table_type = 'ICEBERG'</code>, which writes the data as Parquet files and, in the same step, creates the metadata files in S3:</p>
+
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">CREATE</span> <span class="k">TABLE</span> <span class="n">reviews_iceberg</span>
+<span class="k">WITH</span> <span class="p">(</span>
+  <span class="n">table_type</span> <span class="o">=</span> <span class="s1">'ICEBERG'</span><span class="p">,</span>
+  <span class="n">format</span> <span class="o">=</span> <span class="s1">'PARQUET'</span><span class="p">,</span>
+  <span class="k">location</span> <span class="o">=</span> <span class="s1">'s3://my-bucket/iceberg/reviews/'</span>
+<span class="p">)</span>
+<span class="k">AS</span> <span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">reviews_raw</span><span class="p">;</span>
+</code></pre></div></div>
+
+<p>The catalog (Glue Data Catalog, or any other data catalog like Apache Polaris) doesn’t track the Parquet files. It stores a single pointer to the table’s current <code class="language-plaintext highlighter-rouge">metadata.json</code> file. metadata.json is the top layer: it holds the schema, partition spec, and the list of snapshots(what are snapshots?). Below that is a manifest list per snapshot, then manifest files, which point to the actual Parquet files at the bottom and store their partition values and column stats.</p>
+
+<p>Whenever you make some change to the data, Iceberg creates updated files without overwriting the previous ones. New data files don’t go into an existing manifest, since manifests are immutable too. Each commit writes a new manifest for the files it added, and a new manifest list that points to the old, unchanged manifests plus the new one. Then it writes a new metadata.json with the new snapshot, and the catalog pointer is atomically swapped to it.</p>
+
+<p><img src="/assets/images/iceberg-snapshots.svg" alt="Two Iceberg snapshots: snapshot 2's manifest list reuses manifest A from snapshot 1 and adds a new manifest B for the newly written data file" /></p>
+
+<h2 id="hidden-partitioning">Hidden Partitioning</h2>
+
+<p>We initially define which columns we want to partition the data on, for eg: We might want to partition data on the column <code class="language-plaintext highlighter-rouge">country</code>, so that all the rows with country = ‘UK’ are stored together, all the rows with country = ‘US’ are stored together, and so on. But unlike Hive, we don’t need to create or fill in a separate partition column ourselves, Iceberg does it for us, which is why it is called “hidden” partitioning.</p>
+
+<p>In Hive, if you wanted to partition your data by date, you had to create a separate column (e.g. <code class="language-plaintext highlighter-rouge">event_date</code>) derived from your timestamp column and populate it yourself on every write. Readers then had to remember to filter on <code class="language-plaintext highlighter-rouge">event_date</code> instead of the timestamp; if they forgot, Hive would scan the entire table. And if someone populated <code class="language-plaintext highlighter-rouge">event_date</code> with the wrong format or timezone, the rows would silently land in the wrong partition.</p>
+
+<p>With Iceberg, you define the partition as a transform(ts) on an existing column:</p>
+
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">CREATE</span> <span class="k">TABLE</span> <span class="n">events</span> <span class="p">(</span><span class="n">id</span> <span class="nb">BIGINT</span><span class="p">,</span> <span class="n">ts</span> <span class="nb">TIMESTAMP</span><span class="p">,</span> <span class="n">country</span> <span class="n">STRING</span><span class="p">)</span>
+<span class="n">PARTITIONED</span> <span class="k">BY</span> <span class="p">(</span><span class="k">day</span><span class="p">(</span><span class="n">ts</span><span class="p">),</span> <span class="n">country</span><span class="p">)</span>
+<span class="k">LOCATION</span> <span class="s1">'s3://my-bucket/iceberg/events/'</span>
+<span class="n">TBLPROPERTIES</span> <span class="p">(</span><span class="s1">'table_type'</span> <span class="o">=</span> <span class="s1">'ICEBERG'</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>Now whenever you write data, Iceberg reads the <code class="language-plaintext highlighter-rouge">ts</code> value of each row, works out the day, and writes the row into a data file for that partition. When you query, you simply filter on <code class="language-plaintext highlighter-rouge">ts</code>:</p>
+
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">events</span>
+<span class="k">WHERE</span> <span class="n">ts</span> <span class="o">&gt;=</span> <span class="nb">TIMESTAMP</span> <span class="s1">'2026-11-02 00:00:00'</span>
+  <span class="k">AND</span> <span class="n">ts</span> <span class="o">&lt;</span>  <span class="nb">TIMESTAMP</span> <span class="s1">'2026-11-03 00:00:00'</span><span class="p">;</span>
+</code></pre></div></div>
+
+<p>Iceberg converts this into a filter on the day partition and skips every file that doesn’t match, using the partition values stored in the manifest files. You never have to know how the table is partitioned to get a fast query.</p>
+
+<p>Note that you define the transform only once, when you create the table, not in every query, and you never transform the data yourself. Also, “hidden” doesn’t mean Iceberg adds a hidden column to your data. The Parquet files only contain your real columns; the partition value (e.g. <code class="language-plaintext highlighter-rouge">ts_day=2026-11-02</code>) is stored in the metadata, in each data file’s entry inside its manifest.</p>
+
+<p>The transforms Iceberg supports are:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Transform</th>
+      <th>Example</th>
+      <th>Use case</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>identity</td>
+      <td><code class="language-plaintext highlighter-rouge">country</code></td>
+      <td>Low-cardinality columns</td>
+    </tr>
+    <tr>
+      <td>year / month / day / hour</td>
+      <td><code class="language-plaintext highlighter-rouge">day(ts)</code></td>
+      <td>Time-series data</td>
+    </tr>
+    <tr>
+      <td>bucket</td>
+      <td><code class="language-plaintext highlighter-rouge">bucket(16, user_id)</code></td>
+      <td>Spreading high-cardinality keys evenly</td>
+    </tr>
+    <tr>
+      <td>truncate</td>
+      <td><code class="language-plaintext highlighter-rouge">truncate(4, zip_code)</code></td>
+      <td>Grouping by a prefix of a string or a range of numbers</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="what-happens-when-new-data-arrives">What happens when new data arrives?</h3>
+
+<p>A partition isn’t a single file, it’s a group of files that share the same partition value, and every data file holds rows from only one partition. Since data files are immutable, if you add new rows for country = ‘UK’, Iceberg doesn’t append them to the existing UK file. It writes a <strong>new</strong> data file, tags it <code class="language-plaintext highlighter-rouge">country=UK</code> in a new manifest, and commits a new snapshot. Now the UK partition is made up of two files, and when you query <code class="language-plaintext highlighter-rouge">WHERE country = 'UK'</code>, Iceberg collects every file whose manifest entry says <code class="language-plaintext highlighter-rouge">country=UK</code> and skips the rest.</p>
+
+<p>The same goes for dates. New data for 2026-11-02 doesn’t get added to the manifest that holds the previous 2026-11-02 files, since manifests are immutable too. Each commit writes its own new manifest, so files for the same day can end up spread across several manifests. When you filter on 2026-11-02, Iceberg first uses the <code class="language-plaintext highlighter-rouge">ts_day</code> range stored for each manifest in the manifest list to skip the manifests that can’t contain that day, and then, inside the remaining manifests, picks only the files tagged <code class="language-plaintext highlighter-rouge">ts_day=2026-11-02</code>:</p>
+
+<p><img src="/assets/images/iceberg-hidden-partitioning.svg" alt="Hidden partitioning: a query on 2026-11-02 skips manifest C using the manifest list ranges, then reads only the 2026-11-02 files from manifests A and B, which were written by different commits" /></p>
+
+<p>Over time, frequent small writes leave many small files in each partition. Compaction (<code class="language-plaintext highlighter-rouge">OPTIMIZE ... REWRITE DATA USING BIN_PACK</code> in Athena) reads these small files and writes them out as one bigger file per partition, again as new files, while the old ones stay around for time travel until you expire them.</p>
+
+<h3 id="partition-evolution">Partition Evolution</h3>
+
+<p>Because queries never reference the partition layout directly, you can change how a table is partitioned without rewriting any of the existing data. For example, if your data grows and daily partitions become too big, you can switch to hourly partitions:</p>
+
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">-- Spark SQL (Athena doesn't support partition evolution)</span>
+<span class="k">ALTER</span> <span class="k">TABLE</span> <span class="n">events</span> <span class="k">REPLACE</span> <span class="k">PARTITION</span> <span class="n">FIELD</span> <span class="n">days</span><span class="p">(</span><span class="n">ts</span><span class="p">)</span> <span class="k">WITH</span> <span class="n">hours</span><span class="p">(</span><span class="n">ts</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>The old data files stay in their daily partitions and new data files are written hourly. Each manifest records which partition spec it was written with, so Iceberg knows how to prune both old and new files in the same query, and none of your queries need to change.</p>
+
+<h2 id="key-features">Key Features</h2>
+
+<p>Just like any other OTF, Apache Iceberg also provides time travelling (data versioning), schema evolution, ACID transactions and concurrency (OCC).</p>
+
+<blockquote>
+  <p><strong>Side note: Optimistic Concurrency Control (OCC)</strong></p>
+
+  <p>As we saw earlier, Hive used pessimistic locking: it locked the table or partition before a write, and every other writer had to wait in a queue. OCC takes the opposite approach. It assumes conflicts are rare, so writers don’t lock anything; they all work in parallel and only check for conflicts at the very end, when they commit.</p>
+
+  <p>In Iceberg, a write works like this:</p>
+
+  <ol>
+    <li>The writer reads the current <code class="language-plaintext highlighter-rouge">metadata.json</code> (say <code class="language-plaintext highlighter-rouge">v1</code>) and treats it as its starting point.</li>
+    <li>It writes its new data files, manifest, manifest list and a new <code class="language-plaintext highlighter-rouge">metadata.json</code> (<code class="language-plaintext highlighter-rouge">v2</code>). Nobody else can see these files yet.</li>
+    <li>It asks the catalog to swap the table pointer from <code class="language-plaintext highlighter-rouge">v1</code> to <code class="language-plaintext highlighter-rouge">v2</code>, <strong>only if the pointer is still at <code class="language-plaintext highlighter-rouge">v1</code></strong>. The catalog does this check and swap as one atomic step.</li>
+  </ol>
+
+  <p>If another writer committed first, the pointer has already moved, so the swap fails. The writer then reads the latest metadata and checks whether the other commit actually conflicts with its own (for example, both updated or deleted rows in the same data files). If there’s no conflict, like two writers appending data to different partitions, it reuses the data files it already wrote, regenerates only the metadata files on top of the latest version, and retries the swap. If there is a conflict, the commit fails and the job has to be rerun.</p>
+
+  <p>Imagine two people editing the same Wikipedia page. Neither of them locks the page while they type, but when you hit save, Wikipedia checks whether someone else saved since you started. If they did, you have to reconcile your changes with theirs before your edit goes through.</p>
+
+  <p>This is the same idea as Delta Lake, where the first writer to create the next numbered JSON file in <code class="language-plaintext highlighter-rouge">_delta_log</code> wins. In Iceberg, the “winner” is decided by the catalog’s pointer swap instead.</p>
+
+  <p>Note that OCC doesn’t affect reads at all; readers always just follow the catalog pointer to the latest committed snapshot. The challenges come from commits, in two cases:</p>
+
+  <ul>
+    <li><strong>Multiple writers committing at the same time:</strong> only one pointer swap can win at a time, so the more writers commit at once, the more of them fail and retry. Retrying an append is cheap, since only the metadata files are regenerated, but with many writers committing frequently, jobs spend more and more time retrying and can fail once they run out of retries.</li>
+    <li><strong>Multiple jobs changing the same data files:</strong> for example, an UPDATE/DELETE job and a compaction job both rewriting the same files. Here a retry can’t simply be stacked on top of the other commit, so one of the jobs fails and has to be rerun.</li>
+  </ul>
+
+  <p>So how does this work with streaming, where data never stops arriving? Streaming engines continuously write data files, but only commit once in a while. Spark Structured Streaming commits once per micro-batch (e.g. every minute), and Flink has many parallel tasks writing files with a single committer committing them once per checkpoint. So even a job with hundreds of parallel tasks only makes about one commit per minute. The tradeoff is that data only becomes visible to readers after each commit, and frequent commits leave behind lots of small files and snapshots that need regular compaction and snapshot expiry.</p>
+
+  <p>Iceberg works well with a handful of writers committing every few seconds to minutes, but it wasn’t built for many jobs constantly upserting (updating or inserting rows, which means writing new files and committing each time) into the same table. This is exactly the problem Apache Hudi was built for at Uber, where streaming upserts were the main use case. Hudi 1.0 even introduced non-blocking concurrency control, which lets multiple writers write to the same table without failing each other. More on that in my next post on Hudi!</p>
+</blockquote>
+
+<h2 id="performance">Performance</h2>
+
+<p>There are a lot of optimizations you can do in terms of reads and writes with Apache Iceberg, some of the important ones are:</p>
+
+<h3 id="file-pruning">File Pruning</h3>
+
+<p>Because Iceberg tracks every data file in its metadata, a query engine can skip most files without ever opening them. This happens at three levels:</p>
+
+<ol>
+  <li><strong>Manifest list:</strong> For every manifest, the manifest list stores the range of partition values it covers. Manifests that can’t match your <code class="language-plaintext highlighter-rouge">WHERE</code> clause are skipped completely, like manifest C in the hidden partitioning diagram above.</li>
+  <li><strong>Manifest files:</strong> For every data file, the manifest stores its partition value and column statistics, such as the min/max values, null counts and value counts. Iceberg collects these for the first 100 columns by default, and the engine skips every file whose min/max range can’t contain the value you’re filtering on.</li>
+  <li><strong>Parquet files:</strong> Inside the files that are left, Parquet keeps its own min/max statistics per row group, so the engine can skip parts of a file too.</li>
+</ol>
+
+<p>File pruning on column stats works best when data is sorted. If the rows for a <code class="language-plaintext highlighter-rouge">user_id</code> are spread across every file, every file’s min/max range will contain it and nothing gets skipped. You can define a sort order on the table (<code class="language-plaintext highlighter-rouge">ALTER TABLE events WRITE ORDERED BY user_id</code> in Spark), so that similar values end up in the same files and the min/max ranges stay tight.</p>
+
+<h3 id="compaction">Compaction</h3>
+
+<p>As we saw earlier, frequent writes leave many small files behind, and with merge-on-read, many delete files that readers have to merge at query time. Compaction rewrites them into fewer, bigger files and applies the delete files, so readers open fewer files:</p>
+
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">-- Athena</span>
+<span class="n">OPTIMIZE</span> <span class="n">reviews_iceberg</span> <span class="n">REWRITE</span> <span class="k">DATA</span> <span class="k">USING</span> <span class="n">BIN_PACK</span><span class="p">;</span>
+</code></pre></div></div>
+
+<p>Athena only supports bin-packing, which combines small files without changing the order of the rows. In Spark, <code class="language-plaintext highlighter-rouge">rewrite_data_files</code> can also sort the data or Z-order it on multiple columns while compacting, just like Z-ordering in Delta Lake:</p>
+
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">-- Spark SQL</span>
+<span class="k">CALL</span> <span class="n">glue_catalog</span><span class="p">.</span><span class="k">system</span><span class="p">.</span><span class="n">rewrite_data_files</span><span class="p">(</span>
+  <span class="k">table</span> <span class="o">=&gt;</span> <span class="s1">'amazon_reviews.reviews_iceberg'</span><span class="p">,</span>
+  <span class="n">strategy</span> <span class="o">=&gt;</span> <span class="s1">'sort'</span><span class="p">,</span>
+  <span class="n">sort_order</span> <span class="o">=&gt;</span> <span class="s1">'zorder(user_id, asin)'</span>
+<span class="p">);</span>
+</code></pre></div></div>
+
+<p>Similarly, many small commits leave many small manifests, which slows down query planning. <code class="language-plaintext highlighter-rouge">rewrite_manifests</code> regroups them into fewer manifests, grouped by partition.</p>
+
+<h3 id="snapshot-expiry">Snapshot Expiry</h3>
+
+<p>Every commit creates a new snapshot, and the old snapshots keep pointing to data files that are no longer part of the current table, so they can’t be deleted. This is what makes time travel possible, but if you never clean up, your S3 bucket and your metadata keep growing forever. Expiring snapshots removes the old snapshots from the metadata and deletes the data and metadata files that only they referenced:</p>
+
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">-- Athena</span>
+<span class="k">VACUUM</span> <span class="n">reviews_iceberg</span><span class="p">;</span>
+</code></pre></div></div>
+
+<p>In Athena, <code class="language-plaintext highlighter-rouge">VACUUM</code> expires snapshots older than 5 days by default (set by the <code class="language-plaintext highlighter-rouge">vacuum_max_snapshot_age_seconds</code> table property) and also deletes orphan files, which are files left behind in S3 by failed writes that no snapshot points to. In Spark, the same is done with <code class="language-plaintext highlighter-rouge">expire_snapshots</code> and <code class="language-plaintext highlighter-rouge">remove_orphan_files</code>. Just like <code class="language-plaintext highlighter-rouge">VACUUM</code> in Delta Lake, once a snapshot is expired, you can no longer time travel to it.</p>
+
+<h2 id="limitations">Limitations</h2>
+
+<ul>
+  <li><strong>Maintenance overhead:</strong> Because files are immutable and every commit adds new data and metadata files, an Iceberg table doesn’t stay fast on its own. You need to regularly run compaction, rewrite manifests and expire snapshots, otherwise reads slow down and storage keeps growing. Managed options like AWS Glue Data Catalog’s automatic table optimization and Amazon S3 Tables can run these for you, but at an extra cost.</li>
+  <li><strong>Catalog dependency:</strong> Every read and commit goes through the catalog, so every engine that reads or writes a table has to use the same catalog. Catalogs like Glue, Polaris, Nessie or Hive Metastore also support different features, and moving tables from one catalog to another isn’t trivial.</li>
+  <li><strong>Uneven engine support:</strong> Iceberg is an open spec, but each engine implements a different part of it. For example, Athena doesn’t support partition evolution and only supports bin-packing for compaction, and newer features from the v3 spec, like deletion vectors, aren’t supported by every engine yet. So what you can do with a table depends on the engine you use.</li>
+  <li><strong>Frequent upserts and concurrent writes:</strong> As discussed in the OCC side note, many writers committing at the same time, or jobs constantly updating the same data files, lead to retries and failed commits. Copy-on-write rewrites whole files for small updates, and merge-on-read slows down reads until delete files are compacted.</li>
+</ul>]]></content><author><name>Neha Thakur</name></author><summary type="html"><![CDATA[History, architecture and key features of Apache Iceberg]]></summary></entry><entry><title type="html">Deep Dive into Delta Lake</title><link href="https://nehabthakur.github.io/2026/10/30/deep-dive-into-delta-lake.html" rel="alternate" type="text/html" title="Deep Dive into Delta Lake" /><published>2026-10-30T00:00:00+00:00</published><updated>2026-10-30T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/10/30/deep-dive-into-delta-lake</id><content type="html" xml:base="https://nehabthakur.github.io/2026/10/30/deep-dive-into-delta-lake.html"><![CDATA[<h2 id="history">History</h2>
 
 <p>As you might already know, the creators of Apache Spark founded Databricks, and initially used Spark along with Apache Hive Metastore for their big data processing. However, as I have discussed in my previous post, Apache Hive tracked files strictly at folder/partition level and if you needed to make an update to a single row, you’d have to swap out and rewrite the entire folder. This means it was highly inefficient for writes, and if a write failed halfway through, it would leave partially written files behind that readers would treat as valid data. Furthermore, Spark pipelines running on cloud object storage like Amazon S3 lacked ACID properties, which led to data corruption and partially written data folders when processing jobs crashed.</p>
 
