@@ -118,7 +118,7 @@ Hive was built for on-prem storage devices and completely broke when businesses 
 
 <h2 id="key-features">Key Features</h2>
 
-<p>Just like any other OTFs, Apache Iceberg also provides time travelling (data versioning), schema evolution, partition evolution (covered under Performance), ACID transactions and concurrency (OCC).</p>
+<p>Just like any other OTF, Apache Iceberg also provides time travelling (data versioning), schema evolution, partition evolution (covered under Performance), ACID transactions and concurrency (OCC).</p>
 
 <blockquote>
   <p><strong>Side note: Optimistic Concurrency Control (OCC)</strong></p>
@@ -273,7 +273,7 @@ Hive was built for on-prem storage devices and completely broke when businesses 
 <h2 id="limitations">Limitations</h2>
 
 <ul>
-  <li><strong>Maintenance overhead:</strong> Because files are immutable and every commit adds new data and metadata files. You need to regularly run compaction, rewrite manifests and expire snapshots, otherwise reads slow down and storage keeps growing making the Iceberg table slow.</li>
+  <li><strong>Maintenance overhead:</strong> Because files are immutable and every commit adds new data and metadata files, you need to regularly run compaction, rewrite manifests and expire snapshots, otherwise reads slow down and storage keeps growing making the Iceberg table slow.</li>
   <li><strong>Catalog dependency:</strong> Every read and commit goes through the catalog, so every engine (Spark, Athena, Trino, Presto, etc.) that reads or writes a table has to use the same catalog.</li>
   <li><strong>Uneven engine support:</strong> Iceberg is an open spec, but each engine implements a different part of it. For example, Athena doesn’t support partition evolution and only supports bin-packing for compaction, and newer features from the v3 spec, like deletion vectors, aren’t supported by every engine yet. So what you can do with a table depends on the engine you use.</li>
   <li><strong>Frequent upserts and concurrent writes:</strong> As discussed in the OCC side note, many writers committing at the same time, or jobs constantly updating the same data files, lead to retries and failed commits. Copy-on-write rewrites whole files for small updates, and merge-on-read slows down reads until delete files are compacted.</li>
