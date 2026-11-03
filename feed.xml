@@ -1,4 +1,334 @@
-<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator><link href="https://nehabthakur.github.io/feed.xml" rel="self" type="application/atom+xml" /><link href="https://nehabthakur.github.io/" rel="alternate" type="text/html" /><updated>2026-11-02T16:41:06+00:00</updated><id>https://nehabthakur.github.io/feed.xml</id><title type="html">Neha Thakur</title><subtitle>Hi, I&apos;m Neha. I&apos;m documenting my learning notes in this blog. This is a personal blog and all opinions are my own.</subtitle><author><name>Neha Thakur</name></author><entry><title type="html">Deep Dive into Apache Iceberg</title><link href="https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg.html" rel="alternate" type="text/html" title="Deep Dive into Apache Iceberg" /><published>2026-11-02T00:00:00+00:00</published><updated>2026-11-02T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg</id><content type="html" xml:base="https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg.html"><![CDATA[<p>In this post, we’ll dive deep into Apache Iceberg.</p>
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator><link href="https://nehabthakur.github.io/feed.xml" rel="self" type="application/atom+xml" /><link href="https://nehabthakur.github.io/" rel="alternate" type="text/html" /><updated>2026-11-03T11:43:34+00:00</updated><id>https://nehabthakur.github.io/feed.xml</id><title type="html">Neha Thakur</title><subtitle>Hi, I&apos;m Neha. I&apos;m documenting my learning notes in this blog. This is a personal blog and all opinions are my own.</subtitle><author><name>Neha Thakur</name></author><entry><title type="html">Deep Dive into Apache Hudi</title><link href="https://nehabthakur.github.io/2026/11/03/deep-dive-into-apache-hudi.html" rel="alternate" type="text/html" title="Deep Dive into Apache Hudi" /><published>2026-11-03T00:00:00+00:00</published><updated>2026-11-03T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/11/03/deep-dive-into-apache-hudi</id><content type="html" xml:base="https://nehabthakur.github.io/2026/11/03/deep-dive-into-apache-hudi.html"><![CDATA[<h2 id="history">History</h2>
+
+<p>Apache Hudi (Hadoop Upserts Deletes and Incrementals) was built at Uber around 2016. Because of the scale of data for real-time ingestion and ETL pipelines, they were looking for something that could provide ACID transactions on top of immutable data files, while the data itself was always mutating. So they built Hudi, which was later open-sourced in 2017 and donated to the Apache Software Foundation in 2019, and that’s the history.</p>
+
+<p>At its core, Hudi wanted to connect relational databases to object storage, such as the data lake where a lot of data is stored. It wanted a way to connect these both together through change data capture (CDC), where every insert, update and delete in the database is streamed and applied to the data lake. That’s the reason it has record-level indexing and merge-on-read.</p>
+
+<h2 id="record-keys-and-indexing">Record Keys and Indexing</h2>
+
+<p>Every row in a Hudi table has a unique record key, stored in the Parquet file in a metadata column (<code class="language-plaintext highlighter-rouge">_hoodie_record_key</code>). Hoodie key is record key (like a primary key) + optionally partition path. This key comes from your data, usually the primary key that the upstream apps like relational databases or any other app generate as a unique ID. Hudi’s index maps each record key to the file group it’s stored in, so when an update arrives, Hudi knows exactly which file it belongs to.</p>
+
+<p>Indexing is at the core of Hudi. With indexing, Hudi avoids scanning the entire tables for CRUD operations (mainly updates and deletes, as the index is used by writers to find which file group an incoming record belongs to) thereby speeding up the performance. For eg: If we need to update the email ID of the user_12345, with indexing Hudi will be able to locate in which file this user is located.</p>
+
+<h3 id="types-of-indexes">Types of Indexes</h3>
+
+<p>The type of index you would use with Hudi varies based on use case, data volume, update frequency and access patterns:</p>
+
+<h4 id="bloom-index">Bloom Index</h4>
+
+<p>Every data file contains a tiny, smart checklist of keys inside it. Hudi checks this checklist first and if a record is not in the file, Hudi skips this file. This checklist is a Bloom filter stored in the footer of each base Parquet file (and optionally in the metadata table), along with the min/max key range of the file. A Bloom filter can only say “definitely not here” or “maybe here”, so the files that say “maybe” still have to be opened to confirm. It works best when keys are roughly ordered (e.g. prefixed with a timestamp) and updates mostly hit recent data.</p>
+
+<h4 id="simple-index">Simple Index</h4>
+
+<p>It takes the incoming batch of updates and runs a table JOIN against the keys of existing data files. For every write, Hudi reads the record key column from all the base files in the partitions being written to and joins it with the incoming batch, so the cost grows with the size of the partitions, not the size of your batch. Updating 10 rows in a partition with 1 billion rows still means reading 1 billion keys. This is fine for small tables, or when updates are spread randomly across files, but gets slow and expensive on large datasets. It’s the default index for Spark writes in recent Hudi versions.</p>
+
+<h4 id="record-index">Record Index</h4>
+
+<p>Hudi stores an ultra fast key-value pair in its metadata store (the metadata table at <code class="language-plaintext highlighter-rouge">.hoodie/metadata/</code> under the table’s base path, in a partition called <code class="language-plaintext highlighter-rouge">record_index</code>, stored as HFiles, a sorted key-value file format built for fast single-key lookups) and looks up for information to find a specific record. The key is the record (primary) key and the value is the record’s location (partition path + file group ID), not the whole row, so the index stays small. It’s a global index, meaning keys are unique across the whole table, not just within a partition.</p>
+
+<h4 id="bucket-index">Bucket Index</h4>
+
+<p>Bucket Index calculates mathematical hashing on the primary key (such as userid_12345 always hashes to bucket no.4) When Hudi writes/reads it just does the math to calculate the hash to determine the file this userid_12345 is located at. If the information about userId_12345 changes (e.g. their email), nothing needs to be recalculated: the hash is calculated on the record key, not the row’s values, so userId_12345 always hashes to the same bucket and the update goes to that bucket’s file group. The bucket index isn’t stored anywhere either; Hudi just recalculates <code class="language-plaintext highlighter-rouge">hash(key) % number_of_buckets</code> on every write, and each bucket maps to one file group whose file ID starts with the bucket number (e.g. <code class="language-plaintext highlighter-rouge">00000004-...</code>). The challenge is that the number of buckets per partition is set when the table is created and can’t easily be changed: too few buckets make files grow very large, and too many create small files. The consistent hashing bucket index (for merge-on-read tables) solves this by resizing buckets over time.</p>
+
+<h4 id="hbase-index">HBase Index</h4>
+
+<p>HBase Index is when Hudi outsources the entire indexing operation to an external database (Apache HBase), when Hudi needs to locate a record, it just asks HBase. This means running and maintaining a separate HBase cluster, so since the record index was introduced in Hudi 0.14, it’s rarely chosen for new tables.</p>
+
+<h4 id="in-memory-index">In-memory Index</h4>
+
+<p>It is locating the index inside of Hudi’s RAM (in-memory), this is purely temporary and once the job finishes the index is gone. It’s mainly used for testing and small jobs, because the index has to be rebuilt every time.</p>
+
+<h3 id="global-vs-non-global-indexes">Global vs Non-global Indexes</h3>
+
+<p>Bloom and Simple indexes also come in global variants (<code class="language-plaintext highlighter-rouge">GLOBAL_BLOOM</code>, <code class="language-plaintext highlighter-rouge">GLOBAL_SIMPLE</code>). A non-global index only makes keys unique within a partition, so Hudi only checks the incoming record’s partition. A global index makes keys unique across the whole table, which matters when a record can move partitions, for example when a user moves from country=UK to country=US.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Index</th>
+      <th>Stored where</th>
+      <th>Best for</th>
+      <th>Watch out for</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Bloom</td>
+      <td>Parquet footers / metadata table</td>
+      <td>Ordered keys, updates to recent data</td>
+      <td>False positives with random keys</td>
+    </tr>
+    <tr>
+      <td>Simple</td>
+      <td>Nothing (joins against data files)</td>
+      <td>Small tables, random updates</td>
+      <td>Cost grows with partition size</td>
+    </tr>
+    <tr>
+      <td>Record</td>
+      <td>Metadata table (<code class="language-plaintext highlighter-rouge">record_index</code>)</td>
+      <td>Large tables, exact lookups</td>
+      <td>Extra storage and write cost</td>
+    </tr>
+    <tr>
+      <td>Bucket</td>
+      <td>Nothing (hash calculation)</td>
+      <td>High-throughput upserts</td>
+      <td>Number of buckets fixed at creation</td>
+    </tr>
+    <tr>
+      <td>HBase</td>
+      <td>External HBase cluster</td>
+      <td>Legacy setups</td>
+      <td>Running another system</td>
+    </tr>
+    <tr>
+      <td>In-memory</td>
+      <td>Job memory</td>
+      <td>Testing</td>
+      <td>Lost when the job ends</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="architecture">Architecture</h2>
+
+<p><img src="/assets/images/hudi-architecture.svg" alt="Hudi architecture: changes from a source database are captured by Debezium into a Kafka topic, a Hudi writer upserts them into S3 and syncs the table to Glue Data Catalog, and query engines look up the table in the catalog and read the timeline and file slices from S3" /></p>
+
+<p>Let’s follow one change end to end: user_12345 updates their email.</p>
+
+<ol>
+  <li><strong>Source database:</strong> The app runs <code class="language-plaintext highlighter-rouge">UPDATE users SET email = 'new@mail.com' WHERE user_id = 12345;</code>. Every database writes each change to its own transaction log before committing it (the binlog in MySQL, the WAL in PostgreSQL), and this log is what makes CDC possible.</li>
+  <li><strong>Debezium (CDC):</strong> Debezium reads the transaction log, not the tables, so it puts almost no load on the database. It turns each change into an event with the operation (<code class="language-plaintext highlighter-rouge">c</code> for insert, <code class="language-plaintext highlighter-rouge">u</code> for update, <code class="language-plaintext highlighter-rouge">d</code> for delete), the row before and after the change, and a timestamp:
+    <div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w"> </span><span class="nl">"op"</span><span class="p">:</span><span class="w"> </span><span class="s2">"u"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"before"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nl">"user_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">12345</span><span class="p">,</span><span class="w"> </span><span class="nl">"email"</span><span class="p">:</span><span class="w"> </span><span class="s2">"old@mail.com"</span><span class="w"> </span><span class="p">},</span><span class="w">
+  </span><span class="nl">"after"</span><span class="p">:</span><span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nl">"user_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">12345</span><span class="p">,</span><span class="w"> </span><span class="nl">"email"</span><span class="p">:</span><span class="w"> </span><span class="s2">"new@mail.com"</span><span class="w"> </span><span class="p">},</span><span class="w">
+  </span><span class="nl">"ts_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">1762160000000</span><span class="w"> </span><span class="p">}</span><span class="w">
+</span></code></pre></div>    </div>
+  </li>
+  <li><strong>Kafka topic:</strong> The events are published to a topic per table (e.g. <code class="language-plaintext highlighter-rouge">shop.users</code>), keyed by the primary key, so all the changes for user_12345 stay in order. Kafka also buffers the events, so if Hudi is slow or down, nothing is lost.</li>
+  <li><strong>Hudi writer:</strong> Hudi Streamer, Spark or Flink consumes the events in batches. For each batch, it takes the <code class="language-plaintext highlighter-rouge">after</code> row and uses <code class="language-plaintext highlighter-rouge">user_id</code> as the record key, keeps only the latest change per key using an ordering field (<code class="language-plaintext highlighter-rouge">ts_ms</code>), turns <code class="language-plaintext highlighter-rouge">d</code> events into deletes, looks up the index to find the file group, writes the update (a new file slice for copy-on-write, a log file for merge-on-read) and commits to the timeline. Hudi Streamer also stores the Kafka offsets it processed in the commit, so after a crash it resumes from exactly the right spot without duplicates.</li>
+  <li><strong>Meta sync to Glue:</strong> After the commit, the writer syncs the table’s schema and partitions to Glue Data Catalog, so Athena can see new columns and partitions. Unlike Iceberg, where the catalog holds the pointer to the latest commit, Glue only holds the table definition and base path; the timeline in S3 is the source of truth.</li>
+  <li><strong>Query engines:</strong> Athena, Trino or Spark look up the table in Glue, read the timeline to find the latest completed commit and its file slices, and read those files. A few minutes after the app ran the <code class="language-plaintext highlighter-rouge">UPDATE</code>, a query on the data lake returns <code class="language-plaintext highlighter-rouge">new@mail.com</code>.</li>
+</ol>
+
+<p>Layer by layer, this is how Hudi stores the files. Firstly, the user decides how they want to partition the files, for example on country, date or day etc.</p>
+
+<ul>
+  <li><strong>Base path:</strong> the root folder of the table.</li>
+  <li><strong>Partition path:</strong> for example, country=US one path, country=UK one path, country=France one path.</li>
+  <li><strong>File groups:</strong> each partition has file groups, each identified by a file ID. A record key always belongs to one file group.</li>
+  <li><strong>File slices:</strong> each file group can have multiple file slices. Each slice is a version of the file group: a base Parquet file plus, in merge-on-read, log files with the changes made after it.</li>
+</ul>
+
+<p>When the data keeps streaming, the Parquet files themselves never change. In copy-on-write, an update rewrites the base file as a new file slice. In merge-on-read, updates are appended to log files in the current file slice, and compaction later merges them into a new base Parquet file. New inserts can also create new file groups.</p>
+
+<p><img src="/assets/images/hudi-storage-layout.svg" alt="Hudi storage layout: the base path contains the .hoodie timeline folder and partition paths; the country=UK partition has file groups fg-1 and fg-2; fg-1 has a file slice with a base Parquet file and two log files, which compaction merges into a new file slice" /></p>
+
+<h3 id="table-types-copy-on-write-vs-merge-on-read">Table Types: Copy-on-Write vs Merge-on-Read</h3>
+
+<p>You choose the table type when you create the table, and it decides how Hudi writes changes to the data and how users or engines read the data:</p>
+
+<h4 id="copy-on-write-cow">Copy-on-Write (CoW)</h4>
+
+<p>When the changes are made to data, such as updating a row, etc. Hudi writes a new version of the file, containing the old rows along with the updated changes. Old files stay until a <em>cleaner</em> job is run. This is good for when the tables need to be read heavy, because all the work happens at write time. Every file is already a complete, up-to-date Parquet file, so readers just read it, with nothing to merge at query time. If a table is written once an hour but queried thousands of times, it’s better to pay the cost once during the write than on every read.</p>
+
+<h4 id="merge-on-read-mor">Merge-on-Read (MoR)</h4>
+
+<p>In these table types, when data is changed, Hudi appends the changes to a small log file (Avro) next to the base file, and when a reader (query engine) reads the data, the base file and the log files are merged at query time. A compaction job later merges the log files into a new base Parquet file, so the logs don’t keep growing. This is good for write heavy workloads, because a write only appends the changed rows to a small log file, instead of rewriting a whole Parquet file (up to ~120 MB) for every update. This makes writes fast and cheap, so data can land in the lake within minutes, which is perfect for streaming and CDC. The cost moves to read time, when the logs have to be merged, and to compaction.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th> </th>
+      <th>Copy-on-Write</th>
+      <th>Merge-on-Read</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Update cost</td>
+      <td>High (rewrites the whole file)</td>
+      <td>Low (appends to a log file)</td>
+    </tr>
+    <tr>
+      <td>Read cost</td>
+      <td>Low (Parquet only)</td>
+      <td>Higher (merges base + logs) until compaction</td>
+    </tr>
+    <tr>
+      <td>Data freshness</td>
+      <td>Slower</td>
+      <td>Faster</td>
+    </tr>
+    <tr>
+      <td>Compaction needed</td>
+      <td>No</td>
+      <td>Yes</td>
+    </tr>
+    <tr>
+      <td>Best for</td>
+      <td>Read-heavy, batch updates</td>
+      <td>Write-heavy, streaming/CDC</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="timeline">Timeline</h2>
+
+<p>To track the changed data, Hudi has something called the timeline (stored in the <code class="language-plaintext highlighter-rouge">.hoodie/</code> folder at the base path), this is similar to the commits in <code class="language-plaintext highlighter-rouge">_delta_log</code> in Delta Lake and the snapshots in <code class="language-plaintext highlighter-rouge">metadata.json</code> in Apache Iceberg. For every change in a Hudi table, like a commit, compaction, clean or rollback, it records the action with its time and state (requested → inflight → completed). When an engine comes to read, it first looks at the timeline to find the latest completed commits, and from there which file slices are valid, then reads those files (merging the base and log files for merge-on-read).</p>
+
+<p><img src="/assets/images/hudi-timeline.svg" alt="Hudi timeline: instants t1 to t4 are completed (a commit, two deltacommits and a compaction) and t5 is still inflight; a reader uses the latest completed instant, t4, and ignores t5" /></p>
+
+<h3 id="whats-inside-hoodie">What’s inside <code class="language-plaintext highlighter-rouge">.hoodie/</code>?</h3>
+
+<p>The <code class="language-plaintext highlighter-rouge">.hoodie/</code> folder holds the timeline along with the rest of the table’s metadata. A simplified view of what it looks like (in Hudi 1.x):</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>s3://my-bucket/hudi/orders/.hoodie/
+├── hoodie.properties        ← table config: name, table type (COW/MOR), record key,
+│                              partition field, ordering field, table version
+├── timeline/                ← the timeline: one file per action and state, e.g.
+│   ├── 20261103100000.deltacommit.requested
+│   ├── 20261103100000.deltacommit.inflight
+│   ├── 20261103100000_20261103100012.deltacommit   (completed)
+│   └── history/             ← older instants archived to keep the timeline small
+├── metadata/                ← the metadata table (itself a Hudi table, with its own .hoodie/)
+│   └── files/  column_stats/  bloom_filters/  record_index/
+└── .temp/                   ← marker files for in-progress writes, used to roll back failed writes
+</code></pre></div></div>
+
+<p>In Hudi 0.x, the instant files sit directly inside <code class="language-plaintext highlighter-rouge">.hoodie/</code>, and archived instants go to <code class="language-plaintext highlighter-rouge">.hoodie/archived/</code>.</p>
+
+<h3 id="metadata-table">Metadata Table</h3>
+
+<p>Finding the files of a table by listing folders in S3 is slow, since S3 returns at most 1,000 files per list call, and this gets worse as the table grows. To avoid this, Hudi keeps a metadata table inside <code class="language-plaintext highlighter-rouge">.hoodie/metadata/</code>. It’s an internal Hudi table (merge-on-read, with HFiles as base files) that is updated in the same commit as your data, so it never goes out of sync. It’s split into partitions, each one storing a different kind of index:</p>
+
+<ul>
+  <li><strong>files:</strong> the list of files in every partition, so readers and writers never have to list S3.</li>
+  <li><strong>column_stats:</strong> min/max values and null counts of the columns for every file, used for data skipping.</li>
+  <li><strong>bloom_filters:</strong> the Bloom filters of every base file, so the Bloom index doesn’t have to open each Parquet footer.</li>
+  <li><strong>record_index:</strong> the record index we covered earlier.</li>
+</ul>
+
+<p>For example, the <code class="language-plaintext highlighter-rouge">files</code> partition stores one key-value record per partition, plus one record listing all the partitions:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>key: "__all_partitions__"  →  [country=US, country=UK, country=France]
+key: "country=UK"          →  [fg-1_t1.parquet, .fg-1_t1.log.1, .fg-1_t1.log.2, fg-1_t4.parquet, fg-2_t2.parquet]
+key: "country=US"          →  [...]
+</code></pre></div></div>
+
+<p>So to find the files in <code class="language-plaintext highlighter-rouge">country=UK</code>, Hudi does a single key lookup instead of listing the S3 folder. The listing includes every committed file that still exists, including older file slices the cleaner hasn’t removed yet (like <code class="language-plaintext highlighter-rouge">fg-1_t1.parquet</code> and its log files above), and the reader then uses the timeline to pick the latest valid file slice in each file group (<code class="language-plaintext highlighter-rouge">fg-1_t4.parquet</code> and <code class="language-plaintext highlighter-rouge">fg-2_t2.parquet</code>). Since the metadata table is itself a merge-on-read table, every commit appends the files it added or removed as small log records, which are later compacted into its HFiles.</p>
+
+<p>The metadata table plays a similar role to the manifest files in Iceberg and the <code class="language-plaintext highlighter-rouge">_delta_log</code> in Delta Lake: the engine reads metadata instead of scanning storage.</p>
+
+<h3 id="how-does-this-compare-to-delta-lake-and-iceberg">How does this compare to Delta Lake and Iceberg?</h3>
+
+<p>Hudi splits its metadata into two parts: the timeline is the transaction log (the source of truth for what’s committed), and the metadata table is an optional index that makes finding files faster. Delta Lake keeps both in one place, since <code class="language-plaintext highlighter-rouge">_delta_log</code> stores the commits along with the files added and removed, while Iceberg splits them into <code class="language-plaintext highlighter-rouge">metadata.json</code> and the manifest files:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Role</th>
+      <th>Hudi</th>
+      <th>Delta Lake</th>
+      <th>Iceberg</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Table config + schema</td>
+      <td><code class="language-plaintext highlighter-rouge">hoodie.properties</code> + schema in commit metadata</td>
+      <td><code class="language-plaintext highlighter-rouge">metaData</code> entries in <code class="language-plaintext highlighter-rouge">_delta_log</code></td>
+      <td><code class="language-plaintext highlighter-rouge">metadata.json</code></td>
+    </tr>
+    <tr>
+      <td>Commit history (source of truth)</td>
+      <td>Timeline</td>
+      <td>JSON commits in <code class="language-plaintext highlighter-rouge">_delta_log</code></td>
+      <td>Snapshots in <code class="language-plaintext highlighter-rouge">metadata.json</code></td>
+    </tr>
+    <tr>
+      <td>File list + stats (for speed)</td>
+      <td>Metadata table</td>
+      <td><code class="language-plaintext highlighter-rouge">add</code>/<code class="language-plaintext highlighter-rouge">remove</code> entries + checkpoint Parquet</td>
+      <td>Manifest list + manifests</td>
+    </tr>
+    <tr>
+      <td>Catalog</td>
+      <td>Glue / Hive Metastore (via meta sync)</td>
+      <td>Glue / Hive Metastore / Unity Catalog</td>
+      <td>Glue / Polaris / REST (holds the commit pointer)</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Note that <code class="language-plaintext highlighter-rouge">.hoodie/</code> is not the catalog. It lives with the data in S3, while the catalog (Glue) only maps the table name to its schema and base path. Unlike Iceberg, where a commit is the catalog’s pointer swap, Hudi (like Delta Lake) commits in storage, on the timeline.</p>
+
+<h2 id="query-types">Query Types</h2>
+
+<p>Hudi supports different ways of reading the same table:</p>
+
+<ul>
+  <li><strong>Snapshot query:</strong> returns the latest committed data. For copy-on-write, this just reads the latest base files. For merge-on-read, it merges the base files with their log files at query time, so you get the freshest data but pay the merge cost.</li>
+  <li><strong>Read-optimized query:</strong> only for merge-on-read. It reads only the base files and skips the log files, so it’s as fast as copy-on-write, but it only shows the data as of the last compaction.</li>
+  <li><strong>Incremental query:</strong> returns only the rows that changed after a given commit time. Instead of reprocessing the whole table, a downstream ETL job can just pick up what changed since its last run. Hudi had this from the start, while Delta Lake (Change Data Feed) and Iceberg (incremental reads) added similar features later.</li>
+  <li><strong>Time travel:</strong> reads the table as it was at a past commit.</li>
+</ul>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># Incremental query in Spark: only rows changed after this commit time
+</span><span class="p">(</span><span class="n">spark</span><span class="p">.</span><span class="n">read</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="sh">"</span><span class="s">hudi</span><span class="sh">"</span><span class="p">)</span>
+  <span class="p">.</span><span class="nf">option</span><span class="p">(</span><span class="sh">"</span><span class="s">hoodie.datasource.query.type</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">incremental</span><span class="sh">"</span><span class="p">)</span>
+  <span class="p">.</span><span class="nf">option</span><span class="p">(</span><span class="sh">"</span><span class="s">hoodie.datasource.read.begin.instanttime</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">20261103100000</span><span class="sh">"</span><span class="p">)</span>
+  <span class="p">.</span><span class="nf">load</span><span class="p">(</span><span class="sh">"</span><span class="s">s3://my-bucket/hudi/orders/</span><span class="sh">"</span><span class="p">))</span>
+</code></pre></div></div>
+
+<p>When a merge-on-read table is synced to Glue, it shows up as two tables: <code class="language-plaintext highlighter-rouge">orders_ro</code> for read-optimized queries and <code class="language-plaintext highlighter-rouge">orders_rt</code> for snapshot (real-time) queries.</p>
+
+<h2 id="key-features">Key Features</h2>
+
+<p>Just like any other OTF, Apache Hudi also provides ACID transactions, time travelling (data versioning), schema evolution and concurrency control. On top of these, it’s built around record-level upserts and deletes using record keys, and incremental processing (incremental and CDC queries), which is what makes it a good fit for streaming and CDC pipelines.</p>
+
+<h2 id="performance">Performance</h2>
+
+<h3 id="indexing">Indexing</h3>
+
+<p>Every time a batch of changes arrives, Hudi first tags each incoming record: it uses the index to find out whether the record key already exists, and if so, in which file group. Updates are then routed straight to their file groups and new records are treated as inserts. Without an index, Hudi would have to compare the incoming keys against every key in the table to know which files to change. With an index, only the file groups that actually contain the changed records are touched, so the cost of a write depends on how much data changed. Choosing the right index type (see the table above) is one of the most important performance decisions in Hudi.</p>
+
+<h3 id="mvcc-and-concurrency-control">MVCC and Concurrency Control</h3>
+
+<p>Hudi uses Multi-Version Concurrency Control (MVCC): instead of locking files, it keeps multiple versions of each file group (file slices). A reader always reads the file slices of the latest completed commit on the timeline, while a writer creates new file slices or log files that readers only see once the commit is completed. This means readers always get a consistent snapshot, and a writer and table services like compaction and cleaning can run at the same time as readers, without any locks.</p>
+
+<p>For multiple writers writing to the same table, Hudi uses Optimistic Concurrency Control (OCC), just like Iceberg and Delta Lake, but with one big difference from Iceberg: Hudi needs an external lock provider, such as DynamoDB, ZooKeeper or Hive Metastore, to make sure only one writer commits at a time. At commit time, Hudi checks whether another writer committed changes to the same file groups in the meantime. If not, both commits succeed; if they did, the later commit fails and has to be retried.</p>
+
+<p>As we saw in the Iceberg post, OCC struggles when many writers constantly update the same data. To solve this, Hudi 1.0 introduced Non-Blocking Concurrency Control (NBCC) for merge-on-read tables (only works with MoR tables): multiple writers can write to the same file groups at the same time without failing each other, since each writer only appends to its own log files. The conflicts are resolved later, when the files are merged during reads or compaction, using the ordering field (for example the event time) to decide which version of a record wins.</p>
+
+<h3 id="table-services">Table Services</h3>
+
+<p>Hudi comes with built-in table services that keep the table healthy and fast. They are scheduled and recorded on the timeline just like commits.</p>
+
+<ul>
+  <li><strong>Compaction (merge-on-read only):</strong> merges the log files of a file slice into a new base Parquet file, so readers have less to merge. It can run inline, right after a write (for example every 5 delta commits), which is simple but slows down the writer, or async, in a separate job or alongside a streaming job, so the writer keeps writing.</li>
+  <li><strong>Cleaning:</strong> removes old file slices that are no longer needed, similar to snapshot expiry in Iceberg and <code class="language-plaintext highlighter-rouge">VACUUM</code> in Delta Lake. By default, Hudi keeps the file slices needed for the last 10 commits, and you can instead keep a number of file versions or a number of hours. Once a file slice is cleaned, you can no longer time travel to it (obviously!).</li>
+  <li><strong>Clustering:</strong> rewrites data files to sort the data by the columns you query most (linear sorting, Z-order or Hilbert curves) and merges small files into bigger ones, similar to Z-ordering in Delta Lake and sort compaction in Iceberg. Since clustering moves records to new file groups, it shows up on the timeline as a <code class="language-plaintext highlighter-rouge">replacecommit</code>.</li>
+  <li><strong>Automatic file sizing:</strong> Hudi tries to avoid the small file problem in the first place. When new records are inserted, Hudi routes them into existing files smaller than ~100 MB until they reach ~120 MB, instead of always creating new small files. But with MoR the log files still pile up until compaction function merges them.</li>
+</ul>
+
+<h3 id="data-skipping">Data Skipping</h3>
+
+<p>Just like Iceberg’s manifest files, Hudi can skip files that can’t contain the data you’re filtering on. The <code class="language-plaintext highlighter-rouge">column_stats</code> partition of the metadata table stores the min/max values of the columns for every file, and when data skipping is enabled, the query engine checks these stats first and only reads the files whose range matches your <code class="language-plaintext highlighter-rouge">WHERE</code> clause. This works best when the data is sorted or clustered on the columns you filter on.</p>
+
+<p>Note that Hudi doesn’t have hidden partitioning like Iceberg: partition pruning only works when your query filters on the partition column itself. In Hudi 1.0, expression indexes can help with this by indexing an expression on a column (e.g. the date part of a timestamp), so queries filtering on the timestamp can still skip files.</p>
+
+<h2 id="limitations">Limitations</h2>
+
+<ul>
+  <li><strong>Complexity:</strong> Hudi has a lot of configurations (table types, index types, table services, concurrency modes), and choosing and tuning them for your workload takes time and experience.</li>
+  <li><strong>Copy-on-write vs merge-on-read tradeoff:</strong> Copy-on-write rewrites whole files for small updates, making writes expensive, while merge-on-read makes reads slower until compaction runs, and compaction itself needs to be scheduled and monitored.</li>
+  <li><strong>Multiple writers need extra infrastructure:</strong> Unlike Iceberg, where the catalog decides which commit wins, Hudi needs an external lock provider like DynamoDB or ZooKeeper for concurrent writers.</li>
+  <li><strong>Narrower engine support:</strong> Spark and Flink have the best support. Other engines often only support reads, for example Amazon Athena can query Hudi tables but can’t write to them.</li>
+  <li><strong>Record keys:</strong> Hudi has traditionally required a record key for every table, which doesn’t always fit append-only data like logs. Newer versions can auto-generate record keys.</li>
+  <li><strong>No hidden partitioning:</strong> Partitioning is based on a column you provide, and changing how a table is partitioned means rewriting the data.</li>
+</ul>]]></content><author><name>Neha Thakur</name></author><summary type="html"><![CDATA[History, architecture, performance optimizations and limitations of Apache Hudi]]></summary></entry><entry><title type="html">Deep Dive into Apache Iceberg</title><link href="https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg.html" rel="alternate" type="text/html" title="Deep Dive into Apache Iceberg" /><published>2026-11-02T00:00:00+00:00</published><updated>2026-11-02T00:00:00+00:00</updated><id>https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg</id><content type="html" xml:base="https://nehabthakur.github.io/2026/11/02/deep-dive-into-apache-iceberg.html"><![CDATA[<p>In this post, we’ll dive deep into Apache Iceberg.</p>
 
 <h2 id="history">History</h2>
 

@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 660" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <rect width="800" height="660" fill="#ffffff"/>
+
+  <!-- Base path -->
+  <rect x="230" y="20" width="340" height="50" rx="10" fill="#ede7f6" stroke="#7e57c2" stroke-width="2"/>
+  <text x="400" y="41" text-anchor="middle" font-size="15" font-weight="600" fill="#311b92">Base path</text>
+  <text x="400" y="60" text-anchor="middle" font-size="12.5" fill="#4527a0">s3://my-bucket/hudi/orders/</text>
+
+  <!-- Children of base path -->
+  <rect x="25" y="110" width="170" height="46" rx="8" fill="#e3f2fd" stroke="#1e88e5" stroke-width="2"/>
+  <text x="110" y="129" text-anchor="middle" font-size="14" font-weight="600" fill="#0d47a1">.hoodie/</text>
+  <text x="110" y="147" text-anchor="middle" font-size="11.5" fill="#1565c0">timeline + metadata</text>
+
+  <rect x="220" y="110" width="170" height="46" rx="8" fill="#f5f5f5" stroke="#9e9e9e" stroke-width="2"/>
+  <text x="305" y="129" text-anchor="middle" font-size="14" font-weight="600" fill="#424242">country=US</text>
+  <text x="305" y="147" text-anchor="middle" font-size="11.5" fill="#616161">partition path</text>
+
+  <rect x="415" y="110" width="170" height="46" rx="8" fill="#e0f2f1" stroke="#00897b" stroke-width="2.5"/>
+  <text x="500" y="129" text-anchor="middle" font-size="14" font-weight="600" fill="#004d40">country=UK</text>
+  <text x="500" y="147" text-anchor="middle" font-size="11.5" fill="#00695c">partition path (expanded)</text>
+
+  <rect x="610" y="110" width="170" height="46" rx="8" fill="#f5f5f5" stroke="#9e9e9e" stroke-width="2"/>
+  <text x="695" y="129" text-anchor="middle" font-size="14" font-weight="600" fill="#424242">country=France</text>
+  <text x="695" y="147" text-anchor="middle" font-size="11.5" fill="#616161">partition path</text>
+
+  <!-- UK partition contents -->
+  <rect x="160" y="190" width="620" height="396" rx="12" fill="#fafafa" stroke="#00897b" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="176" y="212" font-size="13" font-weight="600" fill="#00695c">country=UK/</text>
+
+  <!-- File group fg-1 -->
+  <rect x="176" y="222" width="390" height="348" rx="10" fill="#e8f5e9" stroke="#43a047" stroke-width="2"/>
+  <text x="192" y="244" font-size="14" font-weight="600" fill="#1b5e20">File group · file ID fg-1</text>
+
+  <rect x="192" y="256" width="358" height="152" rx="8" fill="#ffffff" stroke="#66bb6a" stroke-width="1.5"/>
+  <text x="208" y="278" font-size="12.5" font-weight="600" fill="#2e7d32">File slice (base instant t1)</text>
+  <rect x="208" y="294" width="150" height="44" rx="6" fill="#fff3e0" stroke="#fb8c00" stroke-width="2"/>
+  <text x="283" y="313" text-anchor="middle" font-size="13" fill="#e65100">fg-1_t1.parquet</text>
+  <text x="283" y="330" text-anchor="middle" font-size="11" fill="#e65100">base file</text>
+  <rect x="376" y="294" width="158" height="44" rx="6" fill="#e3f2fd" stroke="#42a5f5" stroke-width="2"/>
+  <text x="455" y="313" text-anchor="middle" font-size="13" fill="#0d47a1">fg-1_t1.log.1</text>
+  <text x="455" y="330" text-anchor="middle" font-size="11" fill="#1565c0">updates @ t2</text>
+  <rect x="376" y="348" width="158" height="44" rx="6" fill="#e3f2fd" stroke="#42a5f5" stroke-width="2"/>
+  <text x="455" y="367" text-anchor="middle" font-size="13" fill="#0d47a1">fg-1_t1.log.2</text>
+  <text x="455" y="384" text-anchor="middle" font-size="11" fill="#1565c0">updates @ t3</text>
+
+  <line x1="371" y1="408" x2="371" y2="446" stroke="#555" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <text x="382" y="432" font-size="12" fill="#424242">compaction @ t4</text>
+
+  <rect x="192" y="448" width="358" height="106" rx="8" fill="#ffffff" stroke="#66bb6a" stroke-width="1.5"/>
+  <text x="208" y="470" font-size="12.5" font-weight="600" fill="#2e7d32">File slice (base instant t4)</text>
+  <rect x="208" y="486" width="170" height="48" rx="6" fill="#fff3e0" stroke="#fb8c00" stroke-width="2"/>
+  <text x="293" y="506" text-anchor="middle" font-size="13" fill="#e65100">fg-1_t4.parquet</text>
+  <text x="293" y="524" text-anchor="middle" font-size="11" fill="#e65100">t1 base + t2, t3 merged</text>
+
+  <!-- File group fg-2 -->
+  <rect x="582" y="222" width="182" height="348" rx="10" fill="#e8f5e9" stroke="#43a047" stroke-width="2"/>
+  <text x="598" y="244" font-size="14" font-weight="600" fill="#1b5e20">File group · fg-2</text>
+  <rect x="596" y="256" width="154" height="104" rx="8" fill="#ffffff" stroke="#66bb6a" stroke-width="1.5"/>
+  <text x="612" y="278" font-size="12.5" font-weight="600" fill="#2e7d32">File slice (t2)</text>
+  <rect x="608" y="294" width="130" height="48" rx="6" fill="#fff3e0" stroke="#fb8c00" stroke-width="2"/>
+  <text x="673" y="314" text-anchor="middle" font-size="13" fill="#e65100">fg-2_t2.parquet</text>
+  <text x="673" y="332" text-anchor="middle" font-size="11" fill="#e65100">new inserts @ t2</text>
+
+  <!-- arrows from base path -->
+  <g stroke="#555" stroke-width="1.8" fill="none" marker-end="url(#arrow)">
+    <line x1="330" y1="70" x2="120" y2="108"/>
+    <line x1="380" y1="70" x2="310" y2="108"/>
+    <line x1="420" y1="70" x2="495" y2="108"/>
+    <line x1="470" y1="70" x2="685" y2="108"/>
+    <line x1="500" y1="156" x2="500" y2="188"/>
+  </g>
+
+  <!-- Legend -->
+  <rect x="180" y="606" width="18" height="14" rx="3" fill="#fff3e0" stroke="#fb8c00" stroke-width="2"/>
+  <text x="206" y="618" font-size="12.5" fill="#424242">base file (Parquet)</text>
+  <rect x="360" y="606" width="18" height="14" rx="3" fill="#e3f2fd" stroke="#42a5f5" stroke-width="2"/>
+  <text x="386" y="618" font-size="12.5" fill="#424242">log file (Avro, merge-on-read only)</text>
+
+  <text x="400" y="646" text-anchor="middle" font-size="12" fill="#757575">File names are simplified: real names also include a write token.</text>
+</svg>
