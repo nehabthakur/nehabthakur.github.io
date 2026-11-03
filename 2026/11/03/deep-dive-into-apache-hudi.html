@@ -60,7 +60,7 @@
     <h1 class="post-title">Deep Dive into Apache Hudi</h1>
     <p class="post-description">History, architecture, performance optimizations and limitations of Apache Hudi</p>
     <div class="post-meta">
-      Date: November 3, 2026&nbsp;&nbsp;|&nbsp;&nbsp;Estimated Reading Time: 22 min&nbsp;&nbsp;|&nbsp;&nbsp;Author: Neha Thakur
+      Date: November 3, 2026&nbsp;&nbsp;|&nbsp;&nbsp;Estimated Reading Time: 21 min&nbsp;&nbsp;|&nbsp;&nbsp;Author: Neha Thakur
     </div>
   </header>
 
@@ -94,15 +94,15 @@
 
 <h4 id="simple-index">Simple Index</h4>
 
-<p>It takes the incoming batch of updates and runs a table JOIN against the keys of existing data files. For every write, Hudi reads the record key column from all the base files in the partitions being written to and joins it with the incoming batch, so the cost grows with the size of the partitions, not the size of your batch. Updating 10 rows in a partition with 1 billion rows still means reading 1 billion keys. This is fine for small tables, or when updates are spread randomly across files, but gets slow and expensive on large datasets. It’s the default index for Spark writes in recent Hudi versions.</p>
+<p>It takes the incoming batch of updates and runs a table JOIN against the keys of existing data files. For every write, Hudi reads the record key column from all the base files in the partitions being written to and joins it with the incoming batch, so the cost grows with the size of the partitions, not the size of your batch. Updating 10 rows in a partition with 1 billion rows still means reading 1 billion keys. This is fine for small tables, or when updates are spread randomly across files, but gets slow and expensive on large datasets.</p>
 
 <h4 id="record-index">Record Index</h4>
 
-<p>Hudi stores an ultra fast key-value pair in its metadata store (the metadata table at <code class="language-plaintext highlighter-rouge">.hoodie/metadata/</code> under the table’s base path, in a partition called <code class="language-plaintext highlighter-rouge">record_index</code>, stored as HFiles, a sorted key-value file format built for fast single-key lookups) and looks up for information to find a specific record. The key is the record (primary) key and the value is the record’s location (partition path + file group ID), not the whole row, so the index stays small. It’s a global index, meaning keys are unique across the whole table, not just within a partition.</p>
+<p>Hudi stores an ultra fast key-value pair in its metadata store (the metadata table at <code class="language-plaintext highlighter-rouge">.hoodie/metadata/</code> under the table’s base path, in a partition called <code class="language-plaintext highlighter-rouge">record_index</code>, stored as HFiles, a sorted key-value file format) and looks up for information to find a specific record. The key is the record (primary) key and the value is the record’s location (partition path + file group ID), not the whole row, so the index stays small. It’s a global index, meaning keys are unique across the whole table, not just within a partition.</p>
 
 <h4 id="bucket-index">Bucket Index</h4>
 
-<p>Bucket Index calculates mathematical hashing on the primary key (such as userid_12345 always hashes to bucket no.4) When Hudi writes/reads it just does the math to calculate the hash to determine the file this userid_12345 is located at. If the information about userId_12345 changes (e.g. their email), nothing needs to be recalculated: the hash is calculated on the record key, not the row’s values, so userId_12345 always hashes to the same bucket and the update goes to that bucket’s file group. The bucket index isn’t stored anywhere either; Hudi just recalculates <code class="language-plaintext highlighter-rouge">hash(key) % number_of_buckets</code> on every write, and each bucket maps to one file group whose file ID starts with the bucket number (e.g. <code class="language-plaintext highlighter-rouge">00000004-...</code>). The challenge is that the number of buckets per partition is set when the table is created and can’t easily be changed: too few buckets make files grow very large, and too many create small files. The consistent hashing bucket index (for merge-on-read tables) solves this by resizing buckets over time.</p>
+<p>Bucket Index calculates mathematical hashing on the primary key (such as userid_12345 always hashes to bucket no.4) When Hudi writes/reads it just does the math to calculate the hash to determine the file this userid_12345 is located at.</p>
 
 <h4 id="hbase-index">HBase Index</h4>
 
@@ -114,7 +114,7 @@
 
 <h3 id="global-vs-non-global-indexes">Global vs Non-global Indexes</h3>
 
-<p>Bloom and Simple indexes also come in global variants (<code class="language-plaintext highlighter-rouge">GLOBAL_BLOOM</code>, <code class="language-plaintext highlighter-rouge">GLOBAL_SIMPLE</code>). A non-global index only makes keys unique within a partition, so Hudi only checks the incoming record’s partition. A global index makes keys unique across the whole table, which matters when a record can move partitions, for example when a user moves from country=UK to country=US.</p>
+<p>Bloom and Simple indexes also come in global variants (<code class="language-plaintext highlighter-rouge">GLOBAL_BLOOM</code>, <code class="language-plaintext highlighter-rouge">GLOBAL_SIMPLE</code>). A non-global index only makes keys unique within a partition, so Hudi only checks the incoming record’s partition. A global index makes keys unique across the whole table, and it matters when a record can move partitions, for example when a user moves from country=UK to country=US.</p>
 
 <table>
   <thead>
@@ -172,18 +172,20 @@
 <p>Let’s follow one change end to end: user_12345 updates their email.</p>
 
 <ol>
-  <li><strong>Source database:</strong> The app runs <code class="language-plaintext highlighter-rouge">UPDATE users SET email = 'new@mail.com' WHERE user_id = 12345;</code>. Every database writes each change to its own transaction log before committing it (the binlog in MySQL, the WAL in PostgreSQL), and this log is what makes CDC possible.</li>
-  <li><strong>Debezium (CDC):</strong> Debezium reads the transaction log, not the tables, so it puts almost no load on the database. It turns each change into an event with the operation (<code class="language-plaintext highlighter-rouge">c</code> for insert, <code class="language-plaintext highlighter-rouge">u</code> for update, <code class="language-plaintext highlighter-rouge">d</code> for delete), the row before and after the change, and a timestamp:
-    <div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w"> </span><span class="nl">"op"</span><span class="p">:</span><span class="w"> </span><span class="s2">"u"</span><span class="p">,</span><span class="w">
-  </span><span class="nl">"before"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nl">"user_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">12345</span><span class="p">,</span><span class="w"> </span><span class="nl">"email"</span><span class="p">:</span><span class="w"> </span><span class="s2">"old@mail.com"</span><span class="w"> </span><span class="p">},</span><span class="w">
-  </span><span class="nl">"after"</span><span class="p">:</span><span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nl">"user_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">12345</span><span class="p">,</span><span class="w"> </span><span class="nl">"email"</span><span class="p">:</span><span class="w"> </span><span class="s2">"new@mail.com"</span><span class="w"> </span><span class="p">},</span><span class="w">
-  </span><span class="nl">"ts_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">1762160000000</span><span class="w"> </span><span class="p">}</span><span class="w">
-</span></code></pre></div>    </div>
+  <li><strong>Source database:</strong> The app updates user_12345’s email in the database (e.g. MySQL or PostgreSQL). Every database keeps a log of all the changes made to it, called the transaction log, and this log is what makes CDC possible.</li>
+  <li><strong>Debezium:</strong> Debezium is an open-source CDC tool that watches the database’s transaction log and turns every change into a message, like “user_12345’s email changed from old@mail.com to new@mail.com”. Since it reads the log instead of querying the tables, it puts almost no load on the database.</li>
+  <li><strong>Kafka:</strong> Debezium sends these messages to Kafka, which acts like a queue that holds the changes in order until Hudi is ready to pick them up. If Hudi is slow or down, nothing is lost.</li>
+  <li><strong>Hudi writer:</strong> A Hudi writer (Hudi Streamer, Spark or Flink) reads the changes from Kafka every few minutes. For our change, it does the following (assuming a merge-on-read table with the record index):
+    <ol>
+      <li><strong>Find the record key:</strong> The writer takes the record key from the change, here <code class="language-plaintext highlighter-rouge">user_12345</code> (from the <code class="language-plaintext highlighter-rouge">user_id</code> column, which we configured as the record key).</li>
+      <li><strong>Look up the index:</strong> It looks up <code class="language-plaintext highlighter-rouge">user_12345</code> in the record index, in the metadata table (<code class="language-plaintext highlighter-rouge">.hoodie/metadata/record_index</code>). The answer is the record’s location: partition <code class="language-plaintext highlighter-rouge">country=UK</code>, file group <code class="language-plaintext highlighter-rouge">fg-1</code>.</li>
+      <li><strong>Find the latest file slice:</strong> The index only points to the file group, not to a specific file. To find the current file slice of <code class="language-plaintext highlighter-rouge">fg-1</code>, Hudi gets the list of files in <code class="language-plaintext highlighter-rouge">country=UK</code> from the <code class="language-plaintext highlighter-rouge">files</code> partition of the metadata table, and uses the timeline to pick the latest completed file slice of <code class="language-plaintext highlighter-rouge">fg-1</code>, for example <code class="language-plaintext highlighter-rouge">fg-1_t4.parquet</code> and its log files.</li>
+      <li><strong>Write the change:</strong> In merge-on-read, Hudi appends the new email to a log file in that file slice (e.g. <code class="language-plaintext highlighter-rouge">.fg-1_t4.log.1</code>), without reading or rewriting the base file. (In copy-on-write, it would read <code class="language-plaintext highlighter-rouge">fg-1_t4.parquet</code>, replace user_12345’s row, and write a new base file, which becomes a new file slice.)</li>
+      <li><strong>Commit:</strong> The writer commits to the timeline, and in the same commit, updates the <code class="language-plaintext highlighter-rouge">files</code> partition of the metadata table with the new log file. The record index doesn’t change, since user_12345 is still in <code class="language-plaintext highlighter-rouge">fg-1</code>.</li>
+    </ol>
   </li>
-  <li><strong>Kafka topic:</strong> The events are published to a topic per table (e.g. <code class="language-plaintext highlighter-rouge">shop.users</code>), keyed by the primary key, so all the changes for user_12345 stay in order. Kafka also buffers the events, so if Hudi is slow or down, nothing is lost.</li>
-  <li><strong>Hudi writer:</strong> Hudi Streamer, Spark or Flink consumes the events in batches. For each batch, it takes the <code class="language-plaintext highlighter-rouge">after</code> row and uses <code class="language-plaintext highlighter-rouge">user_id</code> as the record key, keeps only the latest change per key using an ordering field (<code class="language-plaintext highlighter-rouge">ts_ms</code>), turns <code class="language-plaintext highlighter-rouge">d</code> events into deletes, looks up the index to find the file group, writes the update (a new file slice for copy-on-write, a log file for merge-on-read) and commits to the timeline. Hudi Streamer also stores the Kafka offsets it processed in the commit, so after a crash it resumes from exactly the right spot without duplicates.</li>
-  <li><strong>Meta sync to Glue:</strong> After the commit, the writer syncs the table’s schema and partitions to Glue Data Catalog, so Athena can see new columns and partitions. Unlike Iceberg, where the catalog holds the pointer to the latest commit, Glue only holds the table definition and base path; the timeline in S3 is the source of truth.</li>
-  <li><strong>Query engines:</strong> Athena, Trino or Spark look up the table in Glue, read the timeline to find the latest completed commit and its file slices, and read those files. A few minutes after the app ran the <code class="language-plaintext highlighter-rouge">UPDATE</code>, a query on the data lake returns <code class="language-plaintext highlighter-rouge">new@mail.com</code>.</li>
+  <li><strong>Glue Data Catalog:</strong> The writer also keeps the table’s definition (schema, partitions and base path) up to date in Glue, so engines like Athena can find the table.</li>
+  <li><strong>Query engines:</strong> When you query the table in Athena, Trino or Spark, the engine finds the table in Glue, reads the timeline to find the latest commit, and reads the files. A few minutes after the app updated the email, the data lake shows <code class="language-plaintext highlighter-rouge">new@mail.com</code>.</li>
 </ol>
 
 <p>Layer by layer, this is how Hudi stores the files. Firstly, the user decides how they want to partition the files, for example on country, date or day etc.</p>
@@ -271,8 +273,6 @@
 └── .temp/                   ← marker files for in-progress writes, used to roll back failed writes
 </code></pre></div></div>
 
-<p>In Hudi 0.x, the instant files sit directly inside <code class="language-plaintext highlighter-rouge">.hoodie/</code>, and archived instants go to <code class="language-plaintext highlighter-rouge">.hoodie/archived/</code>.</p>
-
 <h3 id="metadata-table">Metadata Table</h3>
 
 <p>Finding the files of a table by listing folders in S3 is slow, since S3 returns at most 1,000 files per list call, and this gets worse as the table grows. To avoid this, Hudi keeps a metadata table inside <code class="language-plaintext highlighter-rouge">.hoodie/metadata/</code>. It’s an internal Hudi table (merge-on-read, with HFiles as base files) that is updated in the same commit as your data, so it never goes out of sync. It’s split into partitions, each one storing a different kind of index:</p>
@@ -343,7 +343,7 @@ key: "country=US"          →  [...]
 <p>Hudi supports different ways of reading the same table:</p>
 
 <ul>
-  <li><strong>Snapshot query:</strong> returns the latest committed data. For copy-on-write, this just reads the latest base files. For merge-on-read, it merges the base files with their log files at query time, so you get the freshest data but pay the merge cost.</li>
+  <li><strong>Snapshot query:</strong> returns the latest committed data. For copy-on-write, this just reads the latest base files. For merge-on-read, it merges the base files with their log files at query time, so you get the freshest data but you pay for the merge cost.</li>
   <li><strong>Read-optimized query:</strong> only for merge-on-read. It reads only the base files and skips the log files, so it’s as fast as copy-on-write, but it only shows the data as of the last compaction.</li>
   <li><strong>Incremental query:</strong> returns only the rows that changed after a given commit time. Instead of reprocessing the whole table, a downstream ETL job can just pick up what changed since its last run. Hudi had this from the start, while Delta Lake (Change Data Feed) and Iceberg (incremental reads) added similar features later.</li>
   <li><strong>Time travel:</strong> reads the table as it was at a past commit.</li>
@@ -355,8 +355,6 @@ key: "country=US"          →  [...]
   <span class="p">.</span><span class="nf">option</span><span class="p">(</span><span class="sh">"</span><span class="s">hoodie.datasource.read.begin.instanttime</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">20261103100000</span><span class="sh">"</span><span class="p">)</span>
   <span class="p">.</span><span class="nf">load</span><span class="p">(</span><span class="sh">"</span><span class="s">s3://my-bucket/hudi/orders/</span><span class="sh">"</span><span class="p">))</span>
 </code></pre></div></div>
-
-<p>When a merge-on-read table is synced to Glue, it shows up as two tables: <code class="language-plaintext highlighter-rouge">orders_ro</code> for read-optimized queries and <code class="language-plaintext highlighter-rouge">orders_rt</code> for snapshot (real-time) queries.</p>
 
 <h2 id="key-features">Key Features</h2>
 
